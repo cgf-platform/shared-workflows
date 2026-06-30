@@ -16,9 +16,6 @@ env:
   REGISTRY: ghcr.io
 
 jobs:
-  # ---------------------------------------------------------------------------
-  # Fast feedback: runs on every PR and every push to master
-  # ---------------------------------------------------------------------------
   build-test:
     name: Build and Test
     runs-on: ubuntu-latest
@@ -29,13 +26,13 @@ jobs:
         with:
           distribution: temurin
           java-version: ${{ inputs.java-version }}
-          cache: gradle          # this REPLACES your manual actions/cache step
+          cache: gradle
 
       - name: Source vulnerability scan (Grype)
         uses: anchore/scan-action@v6
         with:
           path: "."
-          fail-build: false        # source scan stays advisory
+          fail-build: false
           severity-cutoff: high
 
       - name: Build, unit + integration tests, coverage gate
@@ -53,10 +50,7 @@ jobs:
           name: reports-${{ inputs.image-name }}
           path: "**/build/reports/"
           if-no-files-found: ignore
-
-  # ---------------------------------------------------------------------------
-  # Package + publish: ONLY on push to master (skipped for PRs)
-  # ---------------------------------------------------------------------------
+          
   package:
     name: Package and Publish
     needs: [ build-test ]
