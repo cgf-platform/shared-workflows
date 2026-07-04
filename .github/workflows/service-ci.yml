@@ -95,7 +95,8 @@ jobs:
         with:
           image: ${{ env.IMAGE }}:${{ github.sha }}
           fail-build: true
-          severity-cutoff: critical 
+          severity-cutoff: critical
+          output-format: table
 
       - name: Upload scan results to Security tab
         if: always()
