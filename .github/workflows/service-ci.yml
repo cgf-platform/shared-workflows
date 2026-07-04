@@ -29,7 +29,7 @@ jobs:
           cache: gradle
 
       - name: Source vulnerability scan (Grype)
-        uses: anchore/scan-action@v6
+        uses: anchore/scan-action@v7
         with:
           path: "."
           fail-build: false
@@ -91,7 +91,7 @@ jobs:
 
       - name: Image vulnerability scan (Grype)
         id: scan
-        uses: anchore/scan-action@v6
+        uses: anchore/scan-action@v7
         with:
           image: ${{ env.IMAGE }}:${{ github.sha }}
           fail-build: true
