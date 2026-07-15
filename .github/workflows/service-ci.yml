@@ -38,7 +38,7 @@ jobs:
       - name: Build, unit + integration tests, coverage gate
         run: |
           chmod +x gradlew
-          ./gradlew build          # dropped --refresh-dependencies (it defeats the cache)
+          ./gradlew build # dropped --refresh-dependencies (it defeats the cache)
         env:
           USERNAME: ${{ secrets.GPR_USER }}
           TOKEN: ${{ secrets.GPR_KEY }}
@@ -107,3 +107,9 @@ jobs:
 
       - name: Publish image (immutable SHA tag only)
         run: docker push ${{ env.IMAGE }}:${{ github.sha }}
+
+      - name: Tag and push latest (main only)
+        if: github.ref == 'refs/heads/master'
+        run: |
+            docker tag ${{ env.IMAGE }}:${{ github.sha }} ${{ env.IMAGE }}:latest
+            docker push ${{ env.IMAGE }}:latest
