@@ -43,6 +43,29 @@ jobs:
           USERNAME: ${{ secrets.GPR_USER }}
           TOKEN: ${{ secrets.GPR_KEY }}
 
+      - name: Publish test report
+        uses: dorny/test-reporter@v2
+        if: always()
+        with:
+          name: Tests — ${{ inputs.image-name }}
+          path: "**/build/test-results/**/*.xml"
+          reporter: java-junit
+          fail-on-empty: false
+
+      - name: Coverage summary
+        if: always()
+        run: |
+          CSV=$(find . -path "*/build/reports/jacoco/test/jacocoTestReport.csv" | head -1)
+          if [ -n "$CSV" ]; then
+            echo "## Coverage — ${{ inputs.image-name }}" >> $GITHUB_STEP_SUMMARY
+            awk -F',' 'NR>1 {m+=$4; c+=$5; bm+=$6; bc+=$7}
+              END {
+                printf "| Metric | Covered |\n|---|---|\n"
+                printf "| Lines | %.1f%% |\n", c/(c+m)*100
+                printf "| Branches | %.1f%% |\n", (bc+bm)>0 ? bc/(bc+bm)*100 : 0
+              }' "$CSV" >> $GITHUB_STEP_SUMMARY
+          fi
+
       - name: Upload test & coverage reports
         if: always()
         uses: actions/upload-artifact@v4
