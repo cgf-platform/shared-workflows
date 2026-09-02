@@ -1,0 +1,205 @@
+name: service-release
+
+# Post-merge release for a Spring Boot service.
+#
+# Builds and tests ONCE, packages that same output into an image, verifies it,
+# publishes it, and emits a manifest naming the immutable digest. That digest is
+# the deployment identity: every environment, and later Argo CD, consumes it
+# without rebuilding. Tags are aliases for humans; the digest is authoritative.
+#
+# Callers must grant exactly:
+#   permissions:
+#     contents: read
+#     packages: write
+#     security-events: write
+
+on:
+  workflow_call:
+    inputs:
+      image-name:
+        description: Service name; the image is ghcr.io/<owner>/<image-name>
+        required: true
+        type: string
+      java-version:
+        description: Temurin major version
+        required: false
+        type: string
+        default: "21"
+      severity-cutoff:
+        description: >-
+          Grype threshold that fails the build. Paired with only-fixed, so a
+          finding with no available fix reports without blocking every service's
+          releases behind an upstream base-image rebuild.
+        required: false
+        type: string
+        default: high
+      publish-latest:
+        description: >-
+          Also move the :latest alias. Off by default. :latest must never appear
+          in a deployment reference -- it makes the running artifact unnameable
+          and rollback inexpressible.
+        required: false
+        type: boolean
+        default: false
+      timeout-minutes:
+        required: false
+        type: number
+        default: 45
+    secrets:
+      GPR_USER:
+        description: GitHub Packages user for dineroo-event-contracts
+        required: true
+      GPR_KEY:
+        description: GitHub Packages token for dineroo-event-contracts
+        required: true
+    outputs:
+      digest:
+        description: Immutable registry digest of the published image
+        value: ${{ jobs.release.outputs.digest }}
+      image:
+        description: Fully qualified image name, without tag or digest
+        value: ${{ jobs.release.outputs.image }}
+
+# Releases queue rather than cancel. Killing one mid-push leaves a partially
+# published tag and no manifest.
+concurrency:
+  group: release-${{ inputs.image-name }}
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  release:
+    name: Build, verify and publish
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    permissions:
+      contents: read
+      packages: write
+      security-events: write
+    env:
+      IMAGE: ghcr.io/${{ github.repository_owner }}/${{ inputs.image-name }}
+      TAG: ${{ github.sha }}
+    outputs:
+      digest: ${{ steps.publish.outputs.digest }}
+      image: ${{ steps.publish.outputs.image }}
+    steps:
+      - name: Check out ${{ inputs.image-name }}
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up JVM build
+        uses: cgf-platform/shared-workflows/.github/actions/setup-jvm@v2.0.0
+        with:
+          java-version: ${{ inputs.java-version }}
+
+      # One Gradle invocation, so `build` and `bootBuildImage` share a single
+      # task graph and the image is packaged from the output that was just
+      # tested. The previous two-job shape re-checked-out and recompiled.
+      - name: Build, test and package image
+        run: ./gradlew build bootBuildImage --imageName "$IMAGE:$TAG" --build-cache
+        env:
+          USERNAME: ${{ secrets.GPR_USER }}
+          TOKEN: ${{ secrets.GPR_KEY }}
+
+      - name: Report tests and coverage
+        if: ${{ !cancelled() }}
+        uses: cgf-platform/shared-workflows/.github/actions/jvm-report@v2.0.0
+        with:
+          service-name: ${{ inputs.image-name }}
+          retention-days: "30"
+
+      # Asserts what the pipeline ships rather than trusting its own step names.
+      # Seven -PBP_* flags in the previous version never reached the buildpack,
+      # so images shipped a full JDK under a step labelled "JRE" and nothing
+      # noticed for months. Informational only: `|| true` so a diagnostic can
+      # never fail an otherwise good release.
+      - name: Record image facts
+        run: |
+          {
+            echo "### Image"
+            echo
+            echo '```'
+            docker image inspect "$IMAGE:$TAG" \
+              --format 'size={{.Size}} platform={{.Os}}/{{.Architecture}} user={{.Config.User}}' || true
+            docker run --rm --entrypoint java "$IMAGE:$TAG" -version 2>&1 || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Scanned before publication, so a failing image is never pushed. The bytes
+      # scanned are the bytes the digest will address.
+      - name: Scan image for vulnerabilities
+        id: scan
+        uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2 # v7
+        with:
+          image: ${{ env.IMAGE }}:${{ github.sha }}
+          fail-build: true
+          severity-cutoff: ${{ inputs.severity-cutoff }}
+          only-fixed: true
+          output-format: sarif
+
+      # Consumes the security-events: write that every caller already granted
+      # and nothing previously used. Uploads on failure too, so a blocked release
+      # leaves the findings behind for triage.
+      - name: Upload scan results to code scanning
+        if: ${{ !cancelled() && steps.scan.outputs.sarif != '' }}
+        uses: github/codeql-action/upload-sarif@6f5948dfacef28e207b48d0905cf90c03365536d # v3
+        with:
+          sarif_file: ${{ steps.scan.outputs.sarif }}
+          category: grype-image
+
+      - name: Log in to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish image and capture digest
+        id: publish
+        run: |
+          set -euo pipefail
+          docker push "$IMAGE:$TAG"
+          digest=$(docker image inspect "$IMAGE:$TAG" \
+                   --format '{{index .RepoDigests 0}}' | cut -d@ -f2)
+          if [ -z "$digest" ]; then
+            echo "::error title=No digest::Push reported success but the registry \
+          digest could not be resolved. Refusing to emit a manifest that cannot \
+          be deployed."
+            exit 1
+          fi
+          {
+            echo "digest=$digest"
+            echo "image=$IMAGE"
+          } >> "$GITHUB_OUTPUT"
+          echo "**Published** \`$IMAGE@$digest\`" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Move :latest alias
+        if: ${{ inputs.publish-latest }}
+        run: |
+          set -euo pipefail
+          docker tag "$IMAGE:$TAG" "$IMAGE:latest"
+          docker push "$IMAGE:latest"
+
+      # The deployment contract. Promotion reads the digest from here; nothing
+      # downstream rebuilds.
+      - name: Emit release manifest
+        run: |
+          set -euo pipefail
+          cat > release-manifest.yaml <<EOF
+          service: ${{ inputs.image-name }}
+          image: ${{ steps.publish.outputs.image }}
+          digest: ${{ steps.publish.outputs.digest }}
+          commit: ${{ github.sha }}
+          repo: ${{ github.repository }}
+          run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          workflowRef: ${{ github.workflow_ref }}
+          builtAt: $(date -u +%Y-%m-%dT%H:%M:%SZ)
+          EOF
+          cat release-manifest.yaml
+
+      - name: Upload release manifest
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-manifest-${{ inputs.image-name }}
+          path: release-manifest.yaml
+          retention-days: 90

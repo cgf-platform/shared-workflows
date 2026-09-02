@@ -1,0 +1,77 @@
+name: service-validate
+
+# Pre-merge validation for a Spring Boot service.
+#
+# Named for the work, not the trigger, so it stays accurate if the same checks
+# are later required on `merge_group` events.
+#
+# This path is read-only by construction. It receives NO secrets and holds no
+# write scope, so a careless or malicious change on a branch cannot publish a
+# package, write a check, or reach the deployment path. Dependencies resolve
+# from GitHub Packages with the caller's GITHUB_TOKEN, which works because the
+# service repos and dineroo-event-contracts share an organisation.
+#
+# Callers must grant exactly:
+#   permissions:
+#     contents: read
+#     packages: read
+
+on:
+  workflow_call:
+    inputs:
+      service-name:
+        description: Service name, used for report headings and artifact names
+        required: true
+        type: string
+      java-version:
+        description: Temurin major version
+        required: false
+        type: string
+        default: "21"
+      timeout-minutes:
+        description: >-
+          Abort after this long. A hung Testcontainers suite would otherwise run
+          to the six-hour platform default.
+        required: false
+        type: number
+        default: 30
+
+concurrency:
+  group: validate-${{ inputs.service-name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Default deny; the job below opts back into exactly what it needs.
+permissions: {}
+
+jobs:
+  validate:
+    name: Validate
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Check out ${{ inputs.service-name }}
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up JVM build
+        uses: cgf-platform/shared-workflows/.github/actions/setup-jvm@v2.0.0
+        with:
+          java-version: ${{ inputs.java-version }}
+
+      - name: Build and test
+        run: ./gradlew build --build-cache
+        env:
+          # Resolves com.cgf.contracts:dineroo-event-contracts. No PAT on this
+          # path -- see the header.
+          USERNAME: ${{ github.actor }}
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Runs on failure too: a failed build is exactly when the failing test
+      # names are worth surfacing.
+      - name: Report tests and coverage
+        if: ${{ !cancelled() }}
+        uses: cgf-platform/shared-workflows/.github/actions/jvm-report@v2.0.0
+        with:
+          service-name: ${{ inputs.service-name }}

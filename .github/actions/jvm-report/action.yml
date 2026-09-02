@@ -1,0 +1,32 @@
+name: JVM test and coverage report
+description: >-
+  Renders JUnit and JaCoCo output into the run summary and uploads the HTML
+  reports. Deliberately avoids dorny/test-reporter and friends, which need
+  `checks: write` -- that permission would break the validate path's guarantee
+  of holding no write scope at all.
+
+inputs:
+  service-name:
+    description: Heading used in the run summary
+    required: true
+  retention-days:
+    description: How long to keep the uploaded HTML reports
+    required: false
+    default: "7"
+
+runs:
+  using: composite
+  steps:
+    - name: Summarize tests and coverage
+      shell: bash
+      env:
+        SERVICE_NAME: ${{ inputs.service-name }}
+      run: python3 "${{ github.action_path }}/summarize.py"
+
+    - name: Upload HTML reports
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      with:
+        name: reports-${{ inputs.service-name }}
+        path: "**/build/reports/**"
+        if-no-files-found: ignore
+        retention-days: ${{ inputs.retention-days }}
