@@ -11,6 +11,13 @@ on:
         required: false
         type: string
         default: "21"
+    secrets:
+      GPR_USER:
+        description: "GitHub Packages user for dineroo-event-contracts"
+        required: true
+      GPR_KEY:
+        description: "GitHub Packages token for dineroo-event-contracts"
+        required: true
 
 env:
   REGISTRY: ghcr.io
