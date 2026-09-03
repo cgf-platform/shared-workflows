@@ -33,7 +33,7 @@ jobs:
       contents: read
       packages: read
       actions: read
-    uses: cgf-platform/shared-workflows/.github/workflows/service-validate.yml@v3.0.0
+    uses: cgf-platform/shared-workflows/.github/workflows/service-validate.yml@v3.1.0
     with:
       service-name: order-service
 ```
@@ -58,7 +58,7 @@ jobs:
       packages: write
       security-events: write
       actions: read
-    uses: cgf-platform/shared-workflows/.github/workflows/service-release.yml@v3.0.0
+    uses: cgf-platform/shared-workflows/.github/workflows/service-release.yml@v3.1.0
     with:
       image-name: order-service
     secrets:
@@ -74,7 +74,8 @@ Exposes `digest` and `image` as outputs. Consume the digest; never a tag.
 `timeout-minutes` (`30`).
 
 **`service-release`** — `image-name` (required), `java-version` (`21`),
-`severity-cutoff` (`high`), `publish-latest` (`false`), `timeout-minutes` (`45`).
+`severity-cutoff` (`high`), `enable-code-scanning` (`false`), `publish-latest`
+(`false`), `timeout-minutes` (`45`).
 
 ## Design rules
 

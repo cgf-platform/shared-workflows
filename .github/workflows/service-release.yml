@@ -34,6 +34,15 @@ on:
         required: false
         type: string
         default: high
+      enable-code-scanning:
+        description: >-
+          Upload SARIF to GitHub code scanning. Off by default: it requires a
+          public repo or GitHub Advanced Security, and on a private free-plan
+          repo the upload fails every run. The vulnerability gate does not depend
+          on it -- findings are always rendered in the run summary.
+        required: false
+        type: boolean
+        default: false
       publish-latest:
         description: >-
           Also move the :latest alias. Off by default. :latest must never appear
@@ -135,7 +144,8 @@ jobs:
       # and nothing previously used. Uploads on failure too, so a blocked release
       # leaves the findings behind for triage.
       - name: Upload scan results to code scanning
-        if: ${{ !cancelled() && steps.scan.outputs.sarif != '' }}
+        if: ${{ inputs.enable-code-scanning && !cancelled() && steps.scan.outputs.sarif != '' }}
+        continue-on-error: true   # a code-scanning outage must never fail a release
         uses: github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4
         with:
           sarif_file: ${{ steps.scan.outputs.sarif }}

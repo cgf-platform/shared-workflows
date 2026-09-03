@@ -11,6 +11,26 @@ existing green build. **PATCH** — a fix restoring intended behaviour.
 
 ---
 
+## v3.1.0
+
+Fixes a latent failure found on the first `mock-server` release run: on a private
+free-plan repository, GitHub code scanning (Advanced Security) is unavailable, so
+`upload-sarif` errored -- and with no `continue-on-error` it would have failed
+even a clean release, not just this vulnerable one.
+
+- **New input `enable-code-scanning`, default `false`.** The SARIF upload is
+  skipped unless a repo can actually use code scanning (public, or GHAS). The
+  vulnerability gate never depended on it: findings are rendered in the run
+  summary regardless, which is why this run still showed the full CVE table.
+- **`continue-on-error` on the upload step**, so even where code scanning is
+  enabled a transient outage cannot fail a release.
+
+No caller change beyond bumping the tag. `security-events: write` stays granted
+but dormant until `enable-code-scanning: true`.
+
+---
+
+
 ## v3.0.0
 
 **Breaking. Callers must grant `actions: read` in addition to their existing
