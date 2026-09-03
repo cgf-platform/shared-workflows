@@ -33,7 +33,7 @@ jobs:
       contents: read
       packages: read
       actions: read
-    uses: cgf-platform/shared-workflows/.github/workflows/service-validate.yml@v2.0.0
+    uses: cgf-platform/shared-workflows/.github/workflows/service-validate.yml@v3.0.0
     with:
       service-name: order-service
 ```
@@ -58,7 +58,7 @@ jobs:
       packages: write
       security-events: write
       actions: read
-    uses: cgf-platform/shared-workflows/.github/workflows/service-release.yml@v2.0.0
+    uses: cgf-platform/shared-workflows/.github/workflows/service-release.yml@v3.0.0
     with:
       image-name: order-service
     secrets:
@@ -127,6 +127,19 @@ it can be read, run and tested locally:
 ```bash
 cd <service-repo> && SERVICE_NAME=order-service python3 path/to/summarize.py
 ```
+
+## Cutting a release
+
+```bash
+./scripts/release.sh v3.1.0          # rewrite internal refs, commit, tag
+./scripts/release.sh v3.1.0 --check  # verify only
+```
+
+The reusable workflows reference their own composite actions by tag, and GitHub
+allows no expressions in `uses:`. So a release must rewrite those references, and
+forgetting means the new workflow silently loads the *previous* release's
+actions — a failure with no error message. The script does the rewrite, proves it
+landed, then tags. Do not tag by hand.
 
 ## Versioning
 
