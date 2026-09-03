@@ -15,6 +15,7 @@ name: service-validate
 #   permissions:
 #     contents: read
 #     packages: read
+#     actions: read
 
 on:
   workflow_call:
@@ -51,9 +52,10 @@ jobs:
     permissions:
       contents: read
       packages: read
+      actions: read   # setup-gradle reads the workflow run for its status report
     steps:
       - name: Check out ${{ inputs.service-name }}
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up JVM build
         uses: cgf-platform/shared-workflows/.github/actions/setup-jvm@v2.0.0
