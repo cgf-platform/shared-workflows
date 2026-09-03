@@ -11,6 +11,62 @@ existing green build. **PATCH** — a fix restoring intended behaviour.
 
 ---
 
+## v3.0.0
+
+**Breaking. Callers must grant `actions: read` in addition to their existing
+permissions.** A called workflow's `permissions:` block *replaces* rather than
+extends, so granting it in the caller alone is not enough and vice versa -- both
+sides move together. That is what makes this MAJOR rather than a patch.
+
+Cut after the first canary run of `v2.0.0` on `mock-server`, which surfaced four
+problems. `v2.0.0` remains tagged and immutable; it never produced a successful
+release.
+
+### Fixes
+
+- **`actions: read` added.** `codeql-action/upload-sarif` calls
+  `GET /actions/runs/{id}`; without it the upload failed with *"Resource not
+  accessible by integration"*, so a blocked release left no findings behind.
+  Callers must grant it on both workflows.
+- **Runtime probe corrected.** `docker run --entrypoint java` can never work on a
+  Paketo image — the launcher is what puts the JVM on `PATH`. Replaced by reading
+  the buildpack metadata label, which states JDK vs JRE definitively.
+- **Action pins bumped to current majors.** The first pins were to
+  checkout v4 / setup-java v4 / upload-artifact v4 / gradle v4 / login v3, all of
+  which run on Node 20 — now forced to Node 24 by the runner. Now v7 / v6 / v7 /
+  v6 / v4, and CodeQL v3 → v4 ahead of its December 2026 deprecation.
+- **Scan split into report and gate.** Grype's failure names no CVE, and its
+  findings were only visible through code scanning. `fail-build` is now `false`
+  and a separate gate step renders the finding table into the run summary before
+  failing, so a blocked release always says what blocked it.
+
+### Also in this release
+
+- **Scan split into report and gate.** `fail-build` is now `false` on the scan;
+  a separate `vulnerability-gate` action renders the finding table into the run
+  summary and *then* fails. Grype's own failure names no CVE, and its findings
+  were only visible through code scanning -- so when the SARIF upload failed, the
+  release was blocked with no way to see why.
+- **`image-facts` action added**, reading the buildpack metadata label to report
+  JDK-vs-JRE definitively.
+- **`severity-cutoff` is an input**, so a service with an unresolvable finding can
+  be unblocked without forking the workflow.
+
+### Migration from v2.0.0
+
+1. Add `actions: read` to both callers.
+2. Bump both `uses:` references to `@v3.0.0`.
+
+**Branch protection:** required check names are `validate` and `release`
+(previously `ci`). Update protection rules in the same change or merges block on
+a check that no longer runs.
+
+**Expect the first bumped service to go red.** The `high` + `only-fixed` gate on
+an image that still ships a full JDK will surface findings that were previously
+invisible. The gate now lists them, so this is triage rather than guesswork.
+
+---
+
 ## v2.0.0
 
 **Breaking. Callers must be rewritten and must adopt deliberately, per service.**
@@ -62,24 +118,6 @@ added later and the same checks must run on `merge_group` events.
   reads columns 8/9.
 - **Concurrency:** PR runs cancel on supersede; releases queue and never cancel
   mid-flight.
-
-### Fixed after the first canary run
-
-- **`actions: read` added.** `codeql-action/upload-sarif` calls
-  `GET /actions/runs/{id}`; without it the upload failed with *"Resource not
-  accessible by integration"*, so a blocked release left no findings behind.
-  Callers must grant it on both workflows.
-- **Runtime probe corrected.** `docker run --entrypoint java` can never work on a
-  Paketo image — the launcher is what puts the JVM on `PATH`. Replaced by reading
-  the buildpack metadata label, which states JDK vs JRE definitively.
-- **Action pins bumped to current majors.** The first pins were to
-  checkout v4 / setup-java v4 / upload-artifact v4 / gradle v4 / login v3, all of
-  which run on Node 20 — now forced to Node 24 by the runner. Now v7 / v6 / v7 /
-  v6 / v4, and CodeQL v3 → v4 ahead of its December 2026 deprecation.
-- **Scan split into report and gate.** Grype's failure names no CVE, and its
-  findings were only visible through code scanning. `fail-build` is now `false`
-  and a separate gate step renders the finding table into the run summary before
-  failing, so a blocked release always says what blocked it.
 
 ### Migration
 
