@@ -63,6 +63,24 @@ added later and the same checks must run on `merge_group` events.
 - **Concurrency:** PR runs cancel on supersede; releases queue and never cancel
   mid-flight.
 
+### Fixed after the first canary run
+
+- **`actions: read` added.** `codeql-action/upload-sarif` calls
+  `GET /actions/runs/{id}`; without it the upload failed with *"Resource not
+  accessible by integration"*, so a blocked release left no findings behind.
+  Callers must grant it on both workflows.
+- **Runtime probe corrected.** `docker run --entrypoint java` can never work on a
+  Paketo image — the launcher is what puts the JVM on `PATH`. Replaced by reading
+  the buildpack metadata label, which states JDK vs JRE definitively.
+- **Action pins bumped to current majors.** The first pins were to
+  checkout v4 / setup-java v4 / upload-artifact v4 / gradle v4 / login v3, all of
+  which run on Node 20 — now forced to Node 24 by the runner. Now v7 / v6 / v7 /
+  v6 / v4, and CodeQL v3 → v4 ahead of its December 2026 deprecation.
+- **Scan split into report and gate.** Grype's failure names no CVE, and its
+  findings were only visible through code scanning. `fail-build` is now `false`
+  and a separate gate step renders the finding table into the run summary before
+  failing, so a blocked release always says what blocked it.
+
 ### Migration
 
 Replace `.github/workflows/ci.yml` with `validate.yml` and `release.yml`. Callers pinned at `v1.0.0` are unaffected until they bump.

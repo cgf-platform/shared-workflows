@@ -32,13 +32,15 @@ jobs:
     permissions:
       contents: read
       packages: read
+      actions: read
     uses: cgf-platform/shared-workflows/.github/workflows/service-validate.yml@v2.0.0
     with:
       service-name: order-service
 ```
 
-No secrets. No write scope. Dependencies resolve from GitHub Packages with the
-caller's `GITHUB_TOKEN`.
+No secrets. No write scope — `actions: read` is required by the SARIF upload
+and is read-only. Dependencies resolve from GitHub Packages with the caller's
+`GITHUB_TOKEN`.
 
 ### `.github/workflows/release.yml`
 
@@ -55,6 +57,7 @@ jobs:
       contents: read
       packages: write
       security-events: write
+      actions: read
     uses: cgf-platform/shared-workflows/.github/workflows/service-release.yml@v2.0.0
     with:
       image-name: order-service
@@ -85,9 +88,16 @@ all. This rules out `dorny/test-reporter` and similar, which need `checks: write
 results go to the run summary instead, rendered by
 [`jvm-report`](.github/actions/jvm-report/).
 
-**Assert, don't claim.** The release logs `java -version` from inside the built
-image. Seven `-PBP_*` flags in a previous version never reached the buildpack, so
-images shipped a full JDK under a step named "JRE" and nothing caught it.
+**Assert, don't claim.** The release reads the buildpack's own metadata to report
+whether the image contains a JDK or a JRE. Seven `-PBP_*` flags in a previous
+version never reached the buildpack, so images shipped a full JDK under a step
+named "JRE" and nothing caught it.
+
+**A blocked release must explain itself.** The scan reports and the gate decides,
+as separate steps. Grype's own failure is one line naming no CVE, and its findings
+are only visible through code scanning -- so when the SARIF upload fails, a release
+is blocked with no way to see why. The gate always writes the finding table to the
+run summary first.
 
 **Everything is pinned.** Third-party actions by commit SHA with a version
 comment; consumers pin this repo by immutable tag. There is deliberately no
@@ -98,8 +108,10 @@ moving `v2` alias — a moving tag is `@master` with better manners.
 ```
 .github/
   actions/
-    setup-jvm/      wrapper validation + JDK + Gradle cache
-    jvm-report/     JUnit + JaCoCo -> run summary; uploads HTML reports
+    setup-jvm/           wrapper validation + JDK + Gradle cache
+    jvm-report/          JUnit + JaCoCo -> run summary; uploads HTML reports
+    image-facts/         size, platform, run-as user, JDK-vs-JRE, buildpacks
+    vulnerability-gate/  renders Grype SARIF, then gates on severity
   workflows/
     service-validate.yml
     service-release.yml

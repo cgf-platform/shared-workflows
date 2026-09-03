@@ -1,0 +1,18 @@
+name: Describe built image
+description: >-
+  Records size, platform, run-as user, Java runtime and buildpacks for a locally
+  built OCI image. Purely informational and cannot fail the build.
+
+inputs:
+  image-ref:
+    description: Image reference to inspect, e.g. ghcr.io/org/svc:sha
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Describe image
+      shell: bash
+      env:
+        IMAGE_REF: ${{ inputs.image-ref }}
+      run: python3 "${{ github.action_path }}/describe.py"

@@ -78,7 +78,7 @@ jobs:
       contents: read
       packages: write
       security-events: write
-      actions: read   # setup-gradle reads the workflow run for its status report
+      actions: read   # required by codeql-action/upload-sarif
     env:
       IMAGE: ghcr.io/${{ github.repository_owner }}/${{ inputs.image-name }}
       TAG: ${{ github.sha }}
@@ -126,7 +126,7 @@ jobs:
         uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
         with:
           image: ${{ env.IMAGE }}:${{ github.sha }}
-          fail-build: true
+          fail-build: false   # the gate step below decides, with a readable report
           severity-cutoff: ${{ inputs.severity-cutoff }}
           only-fixed: true
           output-format: sarif
@@ -140,6 +140,14 @@ jobs:
         with:
           sarif_file: ${{ steps.scan.outputs.sarif }}
           category: grype-image
+
+      # Runs after the upload so findings reach code scanning either way.
+      - name: Gate on vulnerabilities
+        if: ${{ !cancelled() }}
+        uses: cgf-platform/shared-workflows/.github/actions/vulnerability-gate@v2.0.0
+        with:
+          sarif-file: ${{ steps.scan.outputs.sarif }}
+          severity-cutoff: ${{ inputs.severity-cutoff }}
 
       - name: Log in to GHCR
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
