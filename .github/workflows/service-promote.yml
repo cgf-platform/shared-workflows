@@ -1,0 +1,148 @@
+name: service-promote
+
+# Promote an already-released version of a service to production. The release
+# workflow (service-release) builds an immutable image + GitHub Release but does
+# NOT deploy; this resolves the chosen version's digest and commit and writes them
+# to the deploy ledger (dineroo-gn/dineroo-deployment). The VPS reconciler then
+# rolls it out. Rollback = promote an earlier version (or git revert the ledger).
+#
+# The service's own GitHub Releases are the list of promotable versions. Digest and
+# commit are resolved with the service repo's own GITHUB_TOKEN (same-org package +
+# same-repo release); only the cross-repo ledger write needs LEDGER_TOKEN.
+#
+# Callers must grant:
+#   permissions:
+#     contents: read
+#     packages: read
+# and pass LEDGER_TOKEN (Contents:write on dineroo-deployment). Never `secrets: inherit`.
+on:
+  workflow_call:
+    inputs:
+      image-name:
+        description: Service name; the image is ghcr.io/<owner>/<image-name>
+        required: true
+        type: string
+      version:
+        description: Released version to deploy, MAJOR.MINOR.PATCH (no leading v)
+        required: true
+        type: string
+    secrets:
+      LEDGER_TOKEN:
+        description: Token with Contents:write on dineroo-gn/dineroo-deployment.
+        required: true
+
+# One promotion per service at a time; queue rather than cancel so a ledger write
+# is never interrupted mid-push.
+concurrency:
+  group: promote-${{ inputs.image-name }}
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  promote:
+    name: Promote ${{ inputs.image-name }} v${{ inputs.version }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    env:
+      IMAGE: ghcr.io/${{ github.repository_owner }}/${{ inputs.image-name }}
+      TAG: v${{ inputs.version }}
+      VERSION: ${{ inputs.version }}
+      IMAGE_NAME: ${{ inputs.image-name }}
+    steps:
+      - name: Validate version
+        run: |
+          set -euo pipefail
+          printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || {
+            echo "::error title=Bad version::'$VERSION' is not MAJOR.MINOR.PATCH (no leading v)."
+            exit 1
+          }
+
+      # The GitHub Release proves the version exists and names the commit it was built
+      # from; the registry gives the digest the tag points to. Both use this repo's
+      # own GITHUB_TOKEN. If the version isn't a release, list what is.
+      - name: Resolve released image digest and commit
+        id: resolve
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          meta=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" \
+                 --json targetCommitish,createdAt,author 2>/dev/null) || {
+            echo "::error title=No such release::$TAG is not a release of $GITHUB_REPOSITORY."
+            echo "Available versions:"; gh release list --repo "$GITHUB_REPOSITORY" --limit 30 || true
+            exit 1
+          }
+          commit=$(printf '%s' "$meta" | jq -r '.targetCommitish')
+          released_at=$(printf '%s' "$meta" | jq -r '.createdAt')
+          released_by=$(printf '%s' "$meta" | jq -r '.author.login // "unknown"')
+
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          digest=$(docker buildx imagetools inspect "${IMAGE}:${TAG}" --format '{{.Manifest.Digest}}')
+          case "$digest" in
+            sha256:*) ;;
+            *) echo "::error title=No digest::Could not resolve a digest for ${IMAGE}:${TAG}."; exit 1 ;;
+          esac
+
+          {
+            echo "digest=$digest"
+            echo "commit=$commit"
+            echo "released_at=$released_at"
+            echo "released_by=$released_by"
+          } >> "$GITHUB_OUTPUT"
+          echo "Resolved ${IMAGE}:${TAG} -> $digest (commit $commit)"
+
+      - name: Check out the deploy ledger
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: dineroo-gn/dineroo-deployment
+          token: ${{ secrets.LEDGER_TOKEN }}
+          path: .deploy-ledger
+
+      - name: Write and commit the ledger entry
+        working-directory: .deploy-ledger
+        env:
+          DIGEST: ${{ steps.resolve.outputs.digest }}
+          COMMIT: ${{ steps.resolve.outputs.commit }}
+          RELEASED_AT: ${{ steps.resolve.outputs.released_at }}
+          RELEASED_BY: ${{ steps.resolve.outputs.released_by }}
+        run: |
+          set -euo pipefail
+          ledger="environments/prod/${IMAGE_NAME}.yaml"
+          if [ ! -f "$ledger" ]; then
+            echo "::error title=No ledger file::$ledger not found in dineroo-deployment."
+            exit 1
+          fi
+          cat > "$ledger" <<EOF
+          service: ${IMAGE_NAME}
+          image: ${IMAGE}
+          semver: ${VERSION}
+          digest: ${DIGEST}
+          commit: ${COMMIT}
+          released_at: ${RELEASED_AT}
+          released_by: ${RELEASED_BY}
+          promoted_at: $(date -u +%Y-%m-%dT%H:%M:%SZ)
+          promoted_by: ${{ github.actor }}
+          EOF
+          git config user.name "dineroo-release[bot]"
+          git config user.email "release@dineroo.africa"
+          git add "$ledger"
+          if git diff --cached --quiet; then
+            echo "Ledger already at ${IMAGE_NAME} v${VERSION}; nothing to promote."
+            exit 0
+          fi
+          git commit -m "deploy(prod): ${IMAGE_NAME} v${VERSION}"
+          # Shared branch: rebase-retry so concurrent promotions don't collide.
+          for attempt in 1 2 3 4 5; do
+            if git push origin HEAD:master; then
+              echo "Promoted ${IMAGE_NAME} v${VERSION} (attempt $attempt)." >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            echo "Push race on attempt $attempt; rebasing onto origin/master."
+            git fetch origin master
+            git rebase origin/master
+          done
+          echo "::error title=Ledger push failed::Could not push after 5 attempts."
+          exit 1
