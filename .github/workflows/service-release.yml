@@ -3,9 +3,11 @@ name: service-release
 # Post-merge release for a Spring Boot service.
 #
 # Builds and tests ONCE, packages that same output into an image, verifies it,
-# publishes it, and emits a manifest naming the immutable digest. That digest is
-# the deployment identity: every environment, and later Argo CD, consumes it
-# without rebuilding. Tags are aliases for humans; the digest is authoritative.
+# publishes it at v<version>, and cuts a GitHub Release. The digest is the
+# deployment identity; the tag is the human alias. This workflow does NOT deploy:
+# it produces a release candidate. Promotion to production is a separate, deliberate
+# step (dineroo-deployment/promote.yml) that writes the chosen version's digest to
+# the ledger.
 #
 # Callers must grant exactly:
 #   permissions:
@@ -73,10 +75,10 @@ on:
         required: true
       LEDGER_TOKEN:
         description: >-
-          Token with Contents:write on dineroo-gn/dineroo-deployment, used to
-          commit the release's digest to the deploy ledger. Passed explicitly --
-          never `secrets: inherit` into this public workflow.
-        required: true
+          Deprecated / unused. Releases no longer write the deploy ledger --
+          promotion is a separate workflow (dineroo-deployment/promote.yml).
+          Kept optional so existing callers don't break; safe to stop passing it.
+        required: false
     outputs:
       digest:
         description: Immutable registry digest of the published image
@@ -266,6 +268,10 @@ jobs:
 
       # The human-readable alias for the digest: a git tag + release notes in the
       # service repo. The digest, not this tag, remains the deployment identity.
+      # A release produces an immutable, versioned image and a GitHub Release, but
+      # does NOT deploy. Promotion to production is a separate, deliberate step:
+      # dineroo-deployment's promote workflow writes the chosen version's digest to
+      # the ledger, which the VPS reconciler then rolls out.
       - name: Cut the GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -276,60 +282,3 @@ jobs:
             --target "$GITHUB_SHA" \
             --title "$TAG" \
             --generate-notes
-
-      # The deploy contract. Written here, same-org, with a least-privilege token;
-      # the VPS reconciler reads the digest from this file. Rollback = git revert.
-      - name: Check out the deploy ledger
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: dineroo-gn/dineroo-deployment
-          token: ${{ secrets.LEDGER_TOKEN }}
-          path: .deploy-ledger
-
-      - name: Record the release in the deploy ledger
-        working-directory: .deploy-ledger
-        env:
-          IMAGE_NAME: ${{ inputs.image-name }}
-          IMAGE: ${{ steps.publish.outputs.image }}
-          DIGEST: ${{ steps.publish.outputs.digest }}
-          VERSION: ${{ inputs.version }}
-          ACTOR: ${{ github.actor }}
-          SHA: ${{ github.sha }}
-        run: |
-          set -euo pipefail
-          ledger="environments/prod/${IMAGE_NAME}.yaml"
-          if [ ! -f "$ledger" ]; then
-            echo "::error title=No ledger file::$ledger not found in dineroo-deployment."
-            exit 1
-          fi
-          released_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          cat > "$ledger" <<EOF
-          service: ${IMAGE_NAME}
-          image: ${IMAGE}
-          semver: ${VERSION}
-          digest: ${DIGEST}
-          commit: ${SHA}
-          released_at: ${released_at}
-          released_by: ${ACTOR}
-          EOF
-          git config user.name "dineroo-release[bot]"
-          git config user.email "release@dineroo.africa"
-          git add "$ledger"
-          if git diff --cached --quiet; then
-            echo "Ledger already at this release; nothing to commit."
-            exit 0
-          fi
-          git commit -m "deploy(prod): ${IMAGE_NAME} v${VERSION}"
-          # Per-file entries, but a shared branch: rebase-retry so concurrent
-          # releases of different services don't clobber each other.
-          for attempt in 1 2 3 4 5; do
-            if git push origin HEAD:master; then
-              echo "Ledger updated (attempt $attempt)."
-              exit 0
-            fi
-            echo "Push race on attempt $attempt; rebasing onto origin/master."
-            git fetch origin master
-            git rebase origin/master
-          done
-          echo "::error title=Ledger push failed::Could not push ledger after 5 attempts."
-          exit 1
