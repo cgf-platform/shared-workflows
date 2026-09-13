@@ -9,16 +9,25 @@ name: service-release
 #
 # Callers must grant exactly:
 #   permissions:
-#     contents: read
+#     contents: write        # cut the GitHub Release (git tag) in the service repo
 #     packages: write
 #     security-events: write
 #     actions: read
+# and pass GPR_USER, GPR_KEY, LEDGER_TOKEN as secrets (never `secrets: inherit`).
 
 on:
   workflow_call:
     inputs:
       image-name:
         description: Service name; the image is ghcr.io/<owner>/<image-name>
+        required: true
+        type: string
+      version:
+        description: >-
+          Human-supplied semantic version for this release, MAJOR.MINOR.PATCH
+          (no leading v). Tags the image v<version>, cuts a GitHub Release, and
+          is recorded in the deploy ledger. The image digest stays authoritative;
+          the version is the readable alias.
         required: true
         type: string
       java-version:
@@ -62,6 +71,12 @@ on:
       GPR_KEY:
         description: GitHub Packages token for dineroo-event-contracts
         required: true
+      LEDGER_TOKEN:
+        description: >-
+          Token with Contents:write on dineroo-gn/dineroo-deployment, used to
+          commit the release's digest to the deploy ledger. Passed explicitly --
+          never `secrets: inherit` into this public workflow.
+        required: true
     outputs:
       digest:
         description: Immutable registry digest of the published image
@@ -84,13 +99,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: ${{ inputs.timeout-minutes }}
     permissions:
-      contents: read
+      contents: write   # cut the GitHub Release (git tag v<version>) in the service repo
       packages: write
       security-events: write
       actions: read   # required by codeql-action/upload-sarif
     env:
       IMAGE: ghcr.io/${{ github.repository_owner }}/${{ inputs.image-name }}
-      TAG: ${{ github.sha }}
+      TAG: v${{ inputs.version }}
     outputs:
       digest: ${{ steps.publish.outputs.digest }}
       image: ${{ steps.publish.outputs.image }}
@@ -98,7 +113,22 @@ jobs:
       - name: Check out ${{ inputs.image-name }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Set up JVM build
+      # Fail before the ~40-minute build if the version is malformed or already
+      # released. A release is immutable: refuse to overwrite an existing tag.
+      - name: Validate version is new semver
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          version='${{ inputs.version }}'
+          if ! printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error title=Bad version::'$version' is not MAJOR.MINOR.PATCH (no leading v)."
+            exit 1
+          fi
+          if gh release view "v$version" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::error title=Version exists::Release v$version already exists. Pick a new version."
+            exit 1
+          fi
         uses: cgf-platform/shared-workflows/.github/actions/setup-jvm@v3.1.0
         with:
           java-version: ${{ inputs.java-version }}
@@ -126,7 +156,7 @@ jobs:
         if: ${{ !cancelled() }}
         uses: cgf-platform/shared-workflows/.github/actions/image-facts@v3.1.0
         with:
-          image-ref: ${{ env.IMAGE }}:${{ github.sha }}
+          image-ref: ${{ env.IMAGE }}:${{ env.TAG }}
 
       # Scanned before publication, so a failing image is never pushed. The bytes
       # scanned are the bytes the digest will address.
@@ -134,7 +164,7 @@ jobs:
         id: scan
         uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
         with:
-          image: ${{ env.IMAGE }}:${{ github.sha }}
+          image: ${{ env.IMAGE }}:${{ env.TAG }}
           fail-build: false   # the gate step below decides, with a readable report
           severity-cutoff: ${{ inputs.severity-cutoff }}
           only-fixed: true
@@ -215,3 +245,73 @@ jobs:
           name: release-manifest-${{ inputs.image-name }}
           path: release-manifest.yaml
           retention-days: 90
+
+      # The human-readable alias for the digest: a git tag + release notes in the
+      # service repo. The digest, not this tag, remains the deployment identity.
+      - name: Cut the GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "$TAG" \
+            --generate-notes
+
+      # The deploy contract. Written here, same-org, with a least-privilege token;
+      # the VPS reconciler reads the digest from this file. Rollback = git revert.
+      - name: Check out the deploy ledger
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: dineroo-gn/dineroo-deployment
+          token: ${{ secrets.LEDGER_TOKEN }}
+          path: .deploy-ledger
+
+      - name: Record the release in the deploy ledger
+        working-directory: .deploy-ledger
+        env:
+          IMAGE_NAME: ${{ inputs.image-name }}
+          IMAGE: ${{ steps.publish.outputs.image }}
+          DIGEST: ${{ steps.publish.outputs.digest }}
+          VERSION: ${{ inputs.version }}
+          ACTOR: ${{ github.actor }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          ledger="environments/prod/${IMAGE_NAME}.yaml"
+          if [ ! -f "$ledger" ]; then
+            echo "::error title=No ledger file::$ledger not found in dineroo-deployment."
+            exit 1
+          fi
+          released_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          cat > "$ledger" <<EOF
+          service: ${IMAGE_NAME}
+          image: ${IMAGE}
+          semver: ${VERSION}
+          digest: ${DIGEST}
+          commit: ${SHA}
+          released_at: ${released_at}
+          released_by: ${ACTOR}
+          EOF
+          git config user.name "dineroo-release[bot]"
+          git config user.email "release@dineroo.africa"
+          git add "$ledger"
+          if git diff --cached --quiet; then
+            echo "Ledger already at this release; nothing to commit."
+            exit 0
+          fi
+          git commit -m "deploy(prod): ${IMAGE_NAME} v${VERSION}"
+          # Per-file entries, but a shared branch: rebase-retry so concurrent
+          # releases of different services don't clobber each other.
+          for attempt in 1 2 3 4 5; do
+            if git push origin HEAD:master; then
+              echo "Ledger updated (attempt $attempt)."
+              exit 0
+            fi
+            echo "Push race on attempt $attempt; rebasing onto origin/master."
+            git fetch origin master
+            git rebase origin/master
+          done
+          echo "::error title=Ledger push failed::Could not push ledger after 5 attempts."
+          exit 1
