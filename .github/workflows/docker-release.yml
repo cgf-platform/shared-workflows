@@ -1,0 +1,125 @@
+name: docker-release
+
+# Deliberate, versioned release for a Dockerfile-based app (e.g. the Next.js
+# frontends). Builds the image, tags it v<version>, pushes it to GHCR, and cuts a
+# GitHub Release. It does NOT deploy: promotion to production is a separate step
+# (the service's promote workflow writes the digest to the deploy ledger). The
+# digest is the deployment identity; the tag is the human alias.
+#
+# Callers must grant:
+#   permissions:
+#     contents: write   # cut the GitHub Release (git tag) in the service repo
+#     packages: write   # push the image to GHCR
+on:
+  workflow_call:
+    inputs:
+      image-name:
+        description: App name; the image is ghcr.io/<owner>/<image-name>
+        required: true
+        type: string
+      version:
+        description: Semantic version, MAJOR.MINOR.PATCH (no leading v). Tags the image v<version>.
+        required: true
+        type: string
+      build-args:
+        description: Newline-separated KEY=VALUE build args passed to docker build.
+        required: false
+        type: string
+        default: ""
+      context:
+        description: Docker build context.
+        required: false
+        type: string
+        default: "."
+      platforms:
+        description: Target platforms.
+        required: false
+        type: string
+        default: "linux/amd64"
+    outputs:
+      digest:
+        description: Immutable registry digest of the published image
+        value: ${{ jobs.release.outputs.digest }}
+
+# Releases queue rather than cancel, so a partially pushed tag is never left behind.
+concurrency:
+  group: release-${{ inputs.image-name }}
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  release:
+    name: Build and publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # cut the GitHub Release (git tag v<version>) in the service repo
+      packages: write
+    env:
+      IMAGE: ghcr.io/${{ github.repository_owner }}/${{ inputs.image-name }}
+      TAG: v${{ inputs.version }}
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - name: Check out ${{ inputs.image-name }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Fail before the build if the version is malformed or already released.
+      - name: Validate version is new semver
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          version='${{ inputs.version }}'
+          if ! printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error title=Bad version::'$version' is not MAJOR.MINOR.PATCH (no leading v)."
+            exit 1
+          fi
+          if gh release view "v$version" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::error title=Version exists::Release v$version already exists. Pick a new version."
+            exit 1
+          fi
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push image
+        id: build
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: ${{ inputs.context }}
+          push: true
+          platforms: ${{ inputs.platforms }}
+          tags: ${{ env.IMAGE }}:${{ env.TAG }}
+          build-args: ${{ inputs.build-args }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Verify digest
+        run: |
+          set -euo pipefail
+          digest='${{ steps.build.outputs.digest }}'
+          case "$digest" in
+            sha256:*) echo "Published ${IMAGE}:${TAG} -> $digest" >> "$GITHUB_STEP_SUMMARY" ;;
+            *) echo "::error title=No digest::build-push reported no digest for ${IMAGE}:${TAG}."; exit 1 ;;
+          esac
+
+      # The human-readable alias for the digest. The digest, not this tag, is the
+      # deployment identity; promotion reads the digest from the tag.
+      - name: Cut the GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "$TAG" \
+            --generate-notes
