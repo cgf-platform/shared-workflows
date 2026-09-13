@@ -41,24 +41,28 @@ permissions: {}
 
 jobs:
   promote:
-    name: Promote ${{ inputs.image-name }} v${{ inputs.version }}
+    name: Promote ${{ inputs.image-name }} ${{ inputs.version }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: read
     env:
       IMAGE: ghcr.io/${{ github.repository_owner }}/${{ inputs.image-name }}
-      TAG: v${{ inputs.version }}
-      VERSION: ${{ inputs.version }}
       IMAGE_NAME: ${{ inputs.image-name }}
     steps:
-      - name: Validate version
+      # Accept either the bare version (1.2.3) or the tag as shown on the Releases
+      # page (v1.2.3); normalize to both a bare semver and the vX.Y.Z tag.
+      - name: Normalize and validate version
+        id: ver
         run: |
           set -euo pipefail
-          printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || {
-            echo "::error title=Bad version::'$VERSION' is not MAJOR.MINOR.PATCH (no leading v)."
+          raw='${{ inputs.version }}'
+          bare="${raw#v}"
+          if ! printf '%s' "$bare" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error title=Bad version::'$raw' is not a version (1.2.3) or tag (v1.2.3)."
             exit 1
-          }
+          fi
+          { echo "version=$bare"; echo "tag=v$bare"; } >> "$GITHUB_OUTPUT"
 
       # The GitHub Release proves the version exists and names the commit it was built
       # from; the registry gives the digest the tag points to. Both use this repo's
@@ -67,6 +71,7 @@ jobs:
         id: resolve
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.ver.outputs.tag }}
         run: |
           set -euo pipefail
           meta=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" \
@@ -104,6 +109,7 @@ jobs:
       - name: Write and commit the ledger entry
         working-directory: .deploy-ledger
         env:
+          VERSION: ${{ steps.ver.outputs.version }}
           DIGEST: ${{ steps.resolve.outputs.digest }}
           COMMIT: ${{ steps.resolve.outputs.commit }}
           RELEASED_AT: ${{ steps.resolve.outputs.released_at }}
