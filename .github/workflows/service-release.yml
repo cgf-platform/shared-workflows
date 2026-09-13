@@ -129,6 +129,8 @@ jobs:
             echo "::error title=Version exists::Release v$version already exists. Pick a new version."
             exit 1
           fi
+
+      - name: Set up JVM build
         uses: cgf-platform/shared-workflows/.github/actions/setup-jvm@v3.1.0
         with:
           java-version: ${{ inputs.java-version }}
