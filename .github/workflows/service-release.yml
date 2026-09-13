@@ -135,6 +135,22 @@ jobs:
         with:
           java-version: ${{ inputs.java-version }}
 
+      # Stamp the released semver into the Gradle build so the artifact reports it
+      # (Boot banner, actuator /info, JAR manifest) instead of the repo's SNAPSHOT
+      # placeholder. CI checkout only -- never committed back. Fails loudly rather
+      # than silently shipping a SNAPSHOT version.
+      - name: Stamp the release version into the build
+        run: |
+          set -euo pipefail
+          file="build.gradle.kts"
+          [ -f "$file" ] || file="build.gradle"
+          if ! grep -qE '^version[[:space:]]*=' "$file"; then
+            echo "::error title=No version line::No 'version =' line in $file to stamp."
+            exit 1
+          fi
+          sed -i -E "s|^version[[:space:]]*=.*|version = \"${{ inputs.version }}\"|" "$file"
+          echo "Stamped $file:"; grep -E '^version[[:space:]]*=' "$file"
+
       # One Gradle invocation, so `build` and `bootBuildImage` share a single
       # task graph and the image is packaged from the output that was just
       # tested. The previous two-job shape re-checked-out and recompiled.
