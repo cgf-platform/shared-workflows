@@ -5,20 +5,44 @@ name: service-validate
 # Named for the work, not the trigger, so it stays accurate if the same checks
 # are later required on `merge_group` events.
 #
-# This path is read-only by construction. It receives NO secrets and holds no
-# write scope, so a careless or malicious change on a branch cannot publish a
-# package, write a check, or reach the deployment path. Dependencies resolve
-# from GitHub Packages with the caller's GITHUB_TOKEN, which works because the
-# service repos and dineroo-event-contracts share an organisation.
+# This path holds no write scope, so a careless or malicious change on a branch
+# cannot publish a package, write a check, or reach the deployment path.
+#
+# It receives one credential, GPR_USER / GPR_KEY, used only to resolve
+# dependencies from GitHub Packages. The build-conventions Gradle plugin lives in
+# the cgf-platform organisation and a service's GITHUB_TOKEN is scoped to its own
+# repository, so GitHub Packages answers that token with a 404 for the plugin.
+# Without the credential the job falls back to GITHUB_TOKEN, which still resolves
+# dineroo-event-contracts but resolves the plugin only from a restored Gradle
+# cache -- so a build-conventions bump fails until a release has warmed the cache.
+#
+# Code that runs in `./gradlew build` on a PR branch (build scripts, tests) can
+# read that credential. It must therefore be able to do nothing but read
+# packages: a read:packages token for a service account that has read access to
+# build-conventions and dineroo-event-contracts and write access to nothing.
+# GitHub withholds secrets from fork PRs, which fall back to GITHUB_TOKEN. Never
+# call this workflow from a `pull_request_target` trigger.
 #
 # Callers must grant exactly:
 #   permissions:
 #     contents: read
 #     packages: read
 #     actions: read
+# and pass GPR_USER, GPR_KEY as secrets (never `secrets: inherit`).
 
 on:
   workflow_call:
+    secrets:
+      GPR_USER:
+        description: >-
+          GitHub Packages user that owns GPR_KEY. Needed to resolve the
+          build-conventions plugin; optional so existing callers don't break.
+        required: false
+      GPR_KEY:
+        description: >-
+          Read-only (read:packages) GitHub Packages token. Falls back to the
+          caller's GITHUB_TOKEN when absent.
+        required: false
     inputs:
       service-name:
         description: Service name, used for report headings and artifact names
@@ -65,10 +89,11 @@ jobs:
       - name: Build and test
         run: ./gradlew build --build-cache
         env:
-          # Resolves com.cgf.contracts:dineroo-event-contracts. No PAT on this
-          # path -- see the header.
-          USERNAME: ${{ github.actor }}
-          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Resolves the build-conventions plugin and
+          # com.cgf.contracts:dineroo-event-contracts. Read-only by design; falls
+          # back to the caller's GITHUB_TOKEN when none is passed -- see the header.
+          USERNAME: ${{ secrets.GPR_USER || github.actor }}
+          TOKEN: ${{ secrets.GPR_KEY || secrets.GITHUB_TOKEN }}
 
       # Runs on failure too: a failed build is exactly when the failing test
       # names are worth surfacing.

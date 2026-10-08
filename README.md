@@ -36,11 +36,22 @@ jobs:
     uses: cgf-platform/shared-workflows/.github/workflows/service-validate.yml@v3.1.0
     with:
       service-name: order-service
+    secrets:
+      GPR_USER: ${{ secrets.GPR_USER }}
+      GPR_KEY: ${{ secrets.GPR_KEY }}
 ```
 
-No secrets. No write scope — `actions: read` is required by the SARIF upload
-and is read-only. Dependencies resolve from GitHub Packages with the caller's
-`GITHUB_TOKEN`.
+No write scope — `actions: read` is required by the SARIF upload and is
+read-only. The one credential is `GPR_USER`/`GPR_KEY`, the same pair the release
+uses, and it must be a **read-only** (`read:packages`) token: code that runs in
+`./gradlew build` on a PR branch can read it. It is needed because the
+`build-conventions` plugin lives in the `cgf-platform` organisation, which a
+service's `GITHUB_TOKEN` cannot read — GitHub Packages answers it with a 404.
+
+The secrets are optional: without them the job falls back to `GITHUB_TOKEN`, which
+resolves `dineroo-event-contracts` but resolves the plugin only from a warm Gradle
+cache, so a `build-conventions` version bump fails validation until a release has
+run. Call this workflow from `pull_request` only, never `pull_request_target`.
 
 ### `.github/workflows/release.yml`
 
@@ -71,7 +82,7 @@ Exposes `digest` and `image` as outputs. Consume the digest; never a tag.
 ## Inputs
 
 **`service-validate`** — `service-name` (required), `java-version` (`21`),
-`timeout-minutes` (`30`).
+`timeout-minutes` (`30`). Secrets (optional, read-only): `GPR_USER`, `GPR_KEY`.
 
 **`service-release`** — `image-name` (required), `java-version` (`21`),
 `severity-cutoff` (`high`), `enable-code-scanning` (`false`), `publish-latest`
@@ -84,8 +95,9 @@ in one Gradle invocation, so the image is packaged from the output that was just
 tested. The published **digest** is the deployment identity; tags are aliases for
 humans. Nothing downstream may rebuild.
 
-**The validate path holds no write scope.** Not "no production secrets" — none at
-all. This rules out `dorny/test-reporter` and similar, which need `checks: write`;
+**The validate path holds no write scope.** Its only credential is the read-only
+`GPR_*` pair that resolves packages; nothing it holds can publish or deploy. This
+rules out `dorny/test-reporter` and similar, which need `checks: write`;
 results go to the run summary instead, rendered by
 [`jvm-report`](.github/actions/jvm-report/).
 
