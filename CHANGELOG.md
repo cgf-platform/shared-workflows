@@ -11,6 +11,32 @@ existing green build. **PATCH** — a fix restoring intended behaviour.
 
 ---
 
+## v3.9.0
+
+Adds a way to accept a single finding for a limited time, without lowering
+`severity-cutoff` for everything else.
+
+Motivation: a Go stdlib CVE is fixed upstream (so Grype's `only-fixed` counts it as
+fixable) days before Paketo rebuilds the buildpack helpers that ship in every
+Spring Boot image. During that window no builder, pin or dependency bump can clear
+the finding, and the release is blocked on something the service team cannot change.
+
+- **New input `vulnerability-exceptions-file` on `service-release`**, default
+  `.github/vulnerability-exceptions.json`; the gate action takes the same as
+  `exceptions-file`. A JSON list of `{id, owner, reason, expires}` where `id` is the
+  finding ID from the gate table and `expires` is `YYYY-MM-DD`, inclusive.
+- Accepted findings are still listed in the run summary, with owner and expiry.
+- An **expired** exception stops applying: the finding blocks again and the summary
+  says which exception lapsed.
+- A **malformed** file fails the gate (it is never skipped), so a typo cannot turn
+  into a silent bypass. A **missing** file means no exceptions, so existing callers
+  behave exactly as before.
+- Behaviour tests for the gate: `python3 -m unittest discover -s tests`.
+
+No caller change is required; a service that has no exceptions file is unaffected.
+
+---
+
 ## v3.1.0
 
 Fixes a latent failure found on the first `mock-server` release run: on a private

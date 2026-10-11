@@ -45,6 +45,16 @@ on:
         required: false
         type: string
         default: high
+      vulnerability-exceptions-file:
+        description: >-
+          Path, in the service repo, to a JSON list of time-boxed exceptions for
+          findings whose upstream fix has not reached the image yet (e.g. a Go
+          stdlib CVE in buildpack helpers before Paketo rebuilds). Each entry is
+          {id, owner, reason, expires: YYYY-MM-DD}. Absent file = no exceptions;
+          malformed file = release fails; expired entry = finding blocks again.
+        required: false
+        type: string
+        default: .github/vulnerability-exceptions.json
       enable-code-scanning:
         description: >-
           Upload SARIF to GitHub code scanning. Off by default: it requires a
@@ -208,6 +218,7 @@ jobs:
         with:
           sarif-file: ${{ steps.scan.outputs.sarif }}
           severity-cutoff: ${{ inputs.severity-cutoff }}
+          exceptions-file: ${{ inputs.vulnerability-exceptions-file }}
 
       - name: Log in to GHCR
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0

@@ -85,8 +85,32 @@ Exposes `digest` and `image` as outputs. Consume the digest; never a tag.
 `timeout-minutes` (`30`). Secrets (optional, read-only): `GPR_USER`, `GPR_KEY`.
 
 **`service-release`** — `image-name` (required), `java-version` (`21`),
-`severity-cutoff` (`high`), `enable-code-scanning` (`false`), `publish-latest`
-(`false`), `timeout-minutes` (`45`).
+`severity-cutoff` (`high`), `vulnerability-exceptions-file`
+(`.github/vulnerability-exceptions.json`), `enable-code-scanning` (`false`),
+`publish-latest` (`false`), `timeout-minutes` (`45`).
+
+### Accepting a finding for a limited time
+
+When a finding is fixed upstream but the fix has not reached your image yet -- the
+usual case is a Go stdlib CVE in the Paketo buildpack helpers, which stays red until
+Paketo rebuilds -- record an exception in the service repo instead of lowering
+`severity-cutoff`:
+
+```json
+[
+  {
+    "id": "GO-2026-6613-stdlib",
+    "owner": "your-name",
+    "reason": "Fixed in Go 1.27.2 (2026-10-08); Paketo has not rebuilt its buildpack helpers yet.",
+    "expires": "2026-10-25"
+  }
+]
+```
+
+`id` is exactly the ID in the gate's table and matches that one finding (every
+location of it). The run summary keeps listing accepted findings with owner and
+expiry. After `expires` (inclusive) the finding blocks again; a malformed file fails
+the release rather than being ignored. Delete the entry once the fix lands.
 
 ## Design rules
 
