@@ -1,0 +1,100 @@
+name: library-publish
+
+# Manual, versioned release of a Gradle library or plugin to GitHub Packages, plus a
+# matching GitHub Release. One linear job on purpose: build -> publish -> tag, so a tag
+# never exists for a version that failed to publish. Nothing is committed back to the
+# repo: the version is injected as -PreleaseVersion, so master is never rewritten by CI.
+#
+# The library's build must read `releaseVersion` and publish to the repo's own GitHub
+# Packages registry using the USERNAME / TOKEN environment variables (the convention
+# build-conventions and platform-starters already follow).
+#
+# Callers must grant exactly:
+#   permissions:
+#     contents: write   # create the tag and the GitHub Release
+#     packages: write   # publish to this repo's registry
+#
+# Resolving another cgf-platform package while building (for example the platform-catalog)
+# uses the same GITHUB_TOKEN, so the consuming repo needs read access on that package
+# (package settings -> "Manage Actions access").
+
+on:
+  workflow_call:
+    inputs:
+      library-name:
+        description: Library name, used for report headings and the concurrency group
+        required: true
+        type: string
+      version:
+        description: Release version, MAJOR.MINOR.PATCH (no leading v). Tags the repo v<version>.
+        required: true
+        type: string
+      java-version:
+        description: >-
+          Temurin major version. Empty (default) reads `javaVersion` from gradle.properties,
+          falling back to 21.
+        required: false
+        type: string
+        default: ""
+      timeout-minutes:
+        required: false
+        type: number
+        default: 15
+
+# Serialize releases; never cancel one mid-publish (a half-published version is worse
+# than a queued run).
+concurrency:
+  group: library-publish-${{ inputs.library-name }}
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  publish:
+    name: Build, publish and tag
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - name: Check out ${{ inputs.library-name }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Validate version is new semver
+        id: version
+        uses: cgf-platform/shared-workflows/.github/actions/validate-release-version@v3.9.0
+        with:
+          version: ${{ inputs.version }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up JVM build
+        uses: cgf-platform/shared-workflows/.github/actions/setup-jvm@v3.9.0
+        with:
+          java-version: ${{ inputs.java-version }}
+
+      # One invocation: `build` (incl. tests) runs before `publish` in the same task
+      # graph, so a broken library never reaches the registry, and it compiles once.
+      - name: Build and publish to GitHub Packages
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+          USERNAME: ${{ github.actor }}
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: ./gradlew build publish -PreleaseVersion="$RELEASE_VERSION"
+
+      - name: Report tests and coverage
+        if: ${{ !cancelled() }}
+        uses: cgf-platform/shared-workflows/.github/actions/jvm-report@v3.9.0
+        with:
+          service-name: ${{ inputs.library-name }}
+
+      # Tag and release last: the tag exists only after publish succeeded, so v<version>
+      # always names a published artifact. The tag is created by the GitHub API, which
+      # needs no git credentials in the checkout.
+      - name: Tag and release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "$TAG" --generate-notes

@@ -1,0 +1,79 @@
+name: library-validate
+
+# Pre-merge validation for a Gradle library or plugin that is published to GitHub
+# Packages (build-conventions, platform-starters, platform-catalog, platform-migrations).
+#
+# Same trust model as service-validate: no write scope, so a change on a branch cannot
+# publish a package or reach a release. It receives only a read credential, used to
+# resolve other cgf-platform packages (for example the platform-catalog).
+#
+# Callers must grant exactly:
+#   permissions:
+#     contents: read
+#     packages: read
+# and may pass GPR_USER / GPR_KEY (read:packages only). Never `secrets: inherit`, and
+# never call this from a `pull_request_target` trigger.
+
+on:
+  workflow_call:
+    secrets:
+      GPR_USER:
+        description: GitHub Packages user that owns GPR_KEY
+        required: false
+      GPR_KEY:
+        description: Read-only (read:packages) token; falls back to the caller's GITHUB_TOKEN
+        required: false
+    inputs:
+      library-name:
+        description: Library name, used for report headings and the concurrency group
+        required: true
+        type: string
+      java-version:
+        description: >-
+          Temurin major version. Empty (default) reads `javaVersion` from gradle.properties,
+          falling back to 21.
+        required: false
+        type: string
+        default: ""
+      timeout-minutes:
+        description: Abort after this long; a hung Testcontainers suite would otherwise run six hours
+        required: false
+        type: number
+        default: 30
+
+concurrency:
+  group: library-validate-${{ inputs.library-name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  validate:
+    name: Validate
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Check out ${{ inputs.library-name }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up JVM build
+        uses: cgf-platform/shared-workflows/.github/actions/setup-jvm@v3.9.0
+        with:
+          java-version: ${{ inputs.java-version }}
+
+      - name: Build and test
+        env:
+          USERNAME: ${{ secrets.GPR_USER || github.actor }}
+          TOKEN: ${{ secrets.GPR_KEY || secrets.GITHUB_TOKEN }}
+        run: ./gradlew build --build-cache
+
+      - name: Report tests and coverage
+        if: ${{ !cancelled() }}
+        uses: cgf-platform/shared-workflows/.github/actions/jvm-report@v3.9.0
+        with:
+          service-name: ${{ inputs.library-name }}
