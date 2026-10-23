@@ -11,6 +11,67 @@ existing green build. **PATCH** — a fix restoring intended behaviour.
 
 ---
 
+## v3.10.0
+
+Hardens the pipeline against script injection, gives the repo its own CI, and adds the
+building blocks for fleet-wide automation. Nothing here can fail a build that is green
+today, so this is a MINOR.
+
+**Security**
+- **Script injection closed.** `inputs.version`, `inputs.image-name`, step outputs,
+  `github.actor` and `secrets.GITHUB_TOKEN` were interpolated straight into `run:`
+  scripts in `service-release`, `service-promote` and `docker-release`. Anyone able to
+  start a release with a crafted version (`1.2.3"; curl ... | sh`) controlled a step
+  that holds `packages: write`. They now reach scripts through `env:` only, and the
+  version is validated as strict `MAJOR.MINOR.PATCH` first.
+- Checkouts that never push now set `persist-credentials: false`. The promote workflow's
+  ledger checkout keeps the token on purpose, because the next step pushes with it.
+- zizmor reported 34 findings before this change (11 of them template injection) and
+  none after. Policy is in `.github/zizmor.yml`.
+
+**New**
+- **`generate-sbom` on `service-release`** (default `true`). An SPDX SBOM of the exact
+  image about to be published is attached as a run artifact. Informational: it can never
+  fail a release.
+- **`ledger-repo` on `service-promote`**, defaulting to today's
+  `dineroo-gn/dineroo-deployment`. The ledger can move without forking the workflow.
+- **`java-version` is now optional everywhere and defaults to empty.** `setup-jvm` then
+  reads `javaVersion` from the service's `gradle.properties` (the property
+  `build-conventions` already uses for the toolchain and the Paketo JRE), falling back to
+  21. A JDK upgrade becomes one line in the service. Every service sets `javaVersion=21`
+  today, so behaviour is unchanged. A malformed value fails loudly instead of silently
+  falling back.
+- **`library-validate` and `library-publish`** reusable workflows for Gradle libraries and
+  plugins published to GitHub Packages. They replace four near-identical manual
+  `release.yml` files and add PR CI where there was none.
+- **`validate-release-version`** composite action: one tested implementation of the
+  semver and "release must be new" check that was copy-pasted into three workflows.
+- **`ci.yml`**: this repo now lints itself (actionlint, zizmor, shellcheck, the Python
+  tests, and a check that internal action refs agree on one version).
+
+Callers need no change beyond bumping the tag.
+
+---
+
+## v3.2.0 to v3.8.0 (reconstructed from git history)
+
+These releases were tagged without changelog entries. From the commit log:
+
+- **v3.2.0** (2026-09-13): semantic versioning. The release takes a human-supplied
+  `version` and tags the image `v<version>`.
+- **v3.3.0** (2026-09-13): the released semver is stamped into the Gradle build, so the
+  artifact reports `vX.Y.Z` instead of a SNAPSHOT.
+- **v3.4.0** (2026-09-13): release no longer writes the deploy ledger. Promotion is a
+  separate step.
+- **v3.5.0** (2026-09-13): new reusable `service-promote` workflow.
+- **v3.6.0** (2026-09-13): promote accepts a version or a `vX.Y.Z` tag.
+- **v3.7.0** (2026-09-14): new reusable `docker-release` for Dockerfile apps.
+- **v3.8.0** (2026-10-09): the PAT is the default secret.
+
+A stray tag `3.8.0` (no `v`) points at the same commit as `v3.8.0`; it can be deleted.
+
+---
+
 ## v3.9.0
 
 Adds a way to accept a single finding for a limited time, without lowering
