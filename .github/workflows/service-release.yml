@@ -33,10 +33,12 @@ on:
         required: true
         type: string
       java-version:
-        description: Temurin major version
+        description: >-
+          Temurin major version. Empty (default) reads `javaVersion` from the service's
+          gradle.properties so the JDK has a single source of truth, falling back to 21.
         required: false
         type: string
-        default: "21"
+        default: ""
       severity-cutoff:
         description: >-
           Grype threshold that fails the build. Paired with only-fixed, so a
@@ -72,6 +74,13 @@ on:
         required: false
         type: boolean
         default: false
+      generate-sbom:
+        description: >-
+          Attach an SPDX SBOM of the image to the run as an artifact. Informational:
+          a failure to generate it never blocks a release.
+        required: false
+        type: boolean
+        default: true
       timeout-minutes:
         required: false
         type: number
@@ -124,23 +133,16 @@ jobs:
     steps:
       - name: Check out ${{ inputs.image-name }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false   # release talks to GitHub through GH_TOKEN, never git
 
       # Fail before the ~40-minute build if the version is malformed or already
       # released. A release is immutable: refuse to overwrite an existing tag.
       - name: Validate version is new semver
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          version='${{ inputs.version }}'
-          if ! printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
-            echo "::error title=Bad version::'$version' is not MAJOR.MINOR.PATCH (no leading v)."
-            exit 1
-          fi
-          if gh release view "v$version" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "::error title=Version exists::Release v$version already exists. Pick a new version."
-            exit 1
-          fi
+        uses: cgf-platform/shared-workflows/.github/actions/validate-release-version@v3.9.0
+        with:
+          version: ${{ inputs.version }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up JVM build
         uses: cgf-platform/shared-workflows/.github/actions/setup-jvm@v3.9.0
@@ -152,6 +154,8 @@ jobs:
       # placeholder. CI checkout only -- never committed back. Fails loudly rather
       # than silently shipping a SNAPSHOT version.
       - name: Stamp the release version into the build
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}   # already validated as MAJOR.MINOR.PATCH
         run: |
           set -euo pipefail
           file="build.gradle.kts"
@@ -160,7 +164,7 @@ jobs:
             echo "::error title=No version line::No 'version =' line in $file to stamp."
             exit 1
           fi
-          sed -i -E "s|^version[[:space:]]*=.*|version = \"${{ inputs.version }}\"|" "$file"
+          sed -i -E "s|^version[[:space:]]*=.*|version = \"${RELEASE_VERSION}\"|" "$file"
           echo "Stamped $file:"; grep -E '^version[[:space:]]*=' "$file"
 
       # One Gradle invocation, so `build` and `bootBuildImage` share a single
@@ -199,6 +203,18 @@ jobs:
           severity-cutoff: ${{ inputs.severity-cutoff }}
           only-fixed: true
           output-format: sarif
+
+      # Informational supply-chain record of exactly the bytes about to be published.
+      # Never blocks: a syft hiccup must not fail an otherwise green release.
+      - name: Generate SBOM
+        if: ${{ inputs.generate-sbom && !cancelled() }}
+        continue-on-error: true
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          image: ${{ env.IMAGE }}:${{ env.TAG }}
+          format: spdx-json
+          artifact-name: sbom-${{ inputs.image-name }}.spdx.json
+          upload-artifact-retention: 90
 
       # Consumes the security-events: write that every caller already granted
       # and nothing previously used. Uploads on failure too, so a blocked release
@@ -256,16 +272,22 @@ jobs:
       # The deployment contract. Promotion reads the digest from here; nothing
       # downstream rebuilds.
       - name: Emit release manifest
+        env:
+          SERVICE: ${{ inputs.image-name }}
+          PUBLISHED_IMAGE: ${{ steps.publish.outputs.image }}
+          PUBLISHED_DIGEST: ${{ steps.publish.outputs.digest }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          WORKFLOW_REF: ${{ github.workflow_ref }}
         run: |
           set -euo pipefail
           cat > release-manifest.yaml <<EOF
-          service: ${{ inputs.image-name }}
-          image: ${{ steps.publish.outputs.image }}
-          digest: ${{ steps.publish.outputs.digest }}
-          commit: ${{ github.sha }}
-          repo: ${{ github.repository }}
-          run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          workflowRef: ${{ github.workflow_ref }}
+          service: ${SERVICE}
+          image: ${PUBLISHED_IMAGE}
+          digest: ${PUBLISHED_DIGEST}
+          commit: ${GITHUB_SHA}
+          repo: ${GITHUB_REPOSITORY}
+          run: ${RUN_URL}
+          workflowRef: ${WORKFLOW_REF}
           builtAt: $(date -u +%Y-%m-%dT%H:%M:%SZ)
           EOF
           cat release-manifest.yaml
