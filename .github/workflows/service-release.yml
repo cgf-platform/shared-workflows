@@ -87,10 +87,10 @@ on:
         default: 45
     secrets:
       GPR_USER:
-        description: GitHub Packages user for dineroo-event-contracts
+        description: GitHub Packages user for event-contracts
         required: true
       GPR_KEY:
-        description: GitHub Packages token for dineroo-event-contracts
+        description: GitHub Packages token for event-contracts
         required: true
       LEDGER_TOKEN:
         description: >-
