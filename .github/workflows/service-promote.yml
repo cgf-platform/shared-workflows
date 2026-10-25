@@ -33,7 +33,7 @@ on:
           this workflow when the ledger moves.
         required: false
         type: string
-        default: dineroo-gn/dineroo-deployment
+        default: cgf-studio/dineroo-deployment
     secrets:
       LEDGER_TOKEN:
         description: Token with Contents:write on the ledger repo.

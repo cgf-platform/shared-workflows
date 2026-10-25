@@ -34,7 +34,7 @@ today, so this is a MINOR.
   image about to be published is attached as a run artifact. Informational: it can never
   fail a release.
 - **`ledger-repo` on `service-promote`**, defaulting to today's
-  `dineroo-gn/dineroo-deployment`. The ledger can move without forking the workflow.
+  `cgf-studio/dineroo-deployment`. The ledger can move without forking the workflow.
 - **`java-version` is now optional everywhere and defaults to empty.** `setup-jvm` then
   reads `javaVersion` from the service's `gradle.properties` (the property
   `build-conventions` already uses for the toolchain and the Paketo JRE), falling back to
