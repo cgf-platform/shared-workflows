@@ -62,7 +62,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up JVM build
-        uses: cgf-platform/shared-workflows/.github/actions/setup-jvm@v3.9.0
+        uses: cgf-platform/shared-workflows/.github/actions/setup-jvm@v3.10.0
         with:
           java-version: ${{ inputs.java-version }}
 
@@ -74,6 +74,6 @@ jobs:
 
       - name: Report tests and coverage
         if: ${{ !cancelled() }}
-        uses: cgf-platform/shared-workflows/.github/actions/jvm-report@v3.9.0
+        uses: cgf-platform/shared-workflows/.github/actions/jvm-report@v3.10.0
         with:
           service-name: ${{ inputs.library-name }}
