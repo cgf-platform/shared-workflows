@@ -1,0 +1,98 @@
+name: ci
+
+# Self-CI for this repo. Every service's pipeline runs code from here, so a mistake in
+# a workflow or action is a fleet-wide incident; it is checked before it can be tagged.
+#
+# Not a reusable workflow: nothing outside this repo calls it.
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  python-tests:
+    name: Helper script tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Run the behaviour tests
+        run: python3 -m unittest discover -s tests -v
+
+  actionlint:
+    name: actionlint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # actionlint 1.7.12, pinned by digest. It also runs shellcheck over every `run:`.
+      - name: Lint workflows
+        run: >-
+          docker run --rm -v "$PWD:/repo" -w /repo
+          rhysd/actionlint@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667
+          -color
+
+  zizmor:
+    name: zizmor
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Security audit of workflows AND composite actions (script injection, unpinned
+      # actions, excessive permissions). Policy lives in .github/zizmor.yml. SARIF upload
+      # needs Advanced Security, so findings surface as annotations and a failed job.
+      - name: Audit workflows and actions
+        uses: zizmorcore/zizmor-action@85b2b9fb8e3325e7a23d7d0a9d7ba5ae0f999e3e # v0.7.1
+        with:
+          version: 1.31.1
+          collect: all
+          online-audits: false
+          advanced-security: false
+          annotations: true
+          config: .github/zizmor.yml
+
+  release-refs:
+    name: Internal refs are consistent
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # shellcheck ships on GitHub's Ubuntu runners; actionlint covers `run:` blocks only.
+      - name: Lint repo scripts
+        run: shellcheck scripts/*.sh
+      # Workflows reference their own composite actions by tag. A release rewrites every
+      # ref to one version; a branch may sit at the last release's version, but never at
+      # a mixture, which would silently load an older action from a newer workflow.
+      - name: Check every internal action ref points at one version
+        run: |
+          set -euo pipefail
+          refs=$(grep -rhoE 'cgf-platform/shared-workflows/\.github/actions/[a-z-]+@v[0-9]+\.[0-9]+\.[0-9]+' .github/workflows | sed 's/.*@//' | sort -u)
+          if [ "$(printf '%s\n' "$refs" | grep -c .)" -ne 1 ]; then
+            echo "::error title=Mixed internal refs::Internal action refs span several versions:"
+            printf '%s\n' "$refs"
+            exit 1
+          fi
+          ./scripts/release.sh "$refs" --check

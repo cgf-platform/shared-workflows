@@ -63,22 +63,15 @@ jobs:
     steps:
       - name: Check out ${{ inputs.image-name }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false   # release talks to GitHub through GH_TOKEN, never git
 
       # Fail before the build if the version is malformed or already released.
       - name: Validate version is new semver
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          version='${{ inputs.version }}'
-          if ! printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
-            echo "::error title=Bad version::'$version' is not MAJOR.MINOR.PATCH (no leading v)."
-            exit 1
-          fi
-          if gh release view "v$version" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "::error title=Version exists::Release v$version already exists. Pick a new version."
-            exit 1
-          fi
+        uses: cgf-platform/shared-workflows/.github/actions/validate-release-version@v3.9.0
+        with:
+          version: ${{ inputs.version }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
@@ -103,9 +96,11 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Verify digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
         run: |
           set -euo pipefail
-          digest='${{ steps.build.outputs.digest }}'
+          digest="$DIGEST"
           case "$digest" in
             sha256:*) echo "Published ${IMAGE}:${TAG} -> $digest" >> "$GITHUB_STEP_SUMMARY" ;;
             *) echo "::error title=No digest::build-push reported no digest for ${IMAGE}:${TAG}."; exit 1 ;;

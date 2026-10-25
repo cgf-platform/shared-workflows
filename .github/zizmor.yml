@@ -1,0 +1,12 @@
+# zizmor policy for this repo.
+#
+# Third-party actions must be pinned to a full commit SHA. This repo's own composite
+# actions are pinned by immutable release tag instead, because `uses:` allows no
+# expressions and scripts/release.sh rewrites those refs when it cuts a release. A tag
+# in our own org is the same trust boundary as a SHA in our own repo.
+rules:
+  unpinned-uses:
+    config:
+      policies:
+        cgf-platform/shared-workflows/*: ref-pin
+        "*": hash-pin

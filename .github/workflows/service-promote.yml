@@ -3,7 +3,7 @@ name: service-promote
 # Promote an already-released version of a service to production. The release
 # workflow (service-release) builds an immutable image + GitHub Release but does
 # NOT deploy; this resolves the chosen version's digest and commit and writes them
-# to the deploy ledger (dineroo-gn/dineroo-deployment). The VPS reconciler then
+# to the deploy ledger (`ledger-repo`). The VPS reconciler then
 # rolls it out. Rollback = promote an earlier version (or git revert the ledger).
 #
 # The service's own GitHub Releases are the list of promotable versions. Digest and
@@ -14,7 +14,7 @@ name: service-promote
 #   permissions:
 #     contents: read
 #     packages: read
-# and pass LEDGER_TOKEN (Contents:write on dineroo-deployment). Never `secrets: inherit`.
+# and pass LEDGER_TOKEN (Contents:write on the ledger repo). Never `secrets: inherit`.
 on:
   workflow_call:
     inputs:
@@ -23,12 +23,20 @@ on:
         required: true
         type: string
       version:
-        description: Released version to deploy, MAJOR.MINOR.PATCH (no leading v)
+        description: Released version to deploy, 1.2.3 or the tag v1.2.3
         required: true
         type: string
+      ledger-repo:
+        description: >-
+          owner/name of the repository holding environments/prod/<service>.yaml. The
+          default is the current production ledger; override it rather than forking
+          this workflow when the ledger moves.
+        required: false
+        type: string
+        default: cgf-studio/dineroo-deployment
     secrets:
       LEDGER_TOKEN:
-        description: Token with Contents:write on dineroo-gn/dineroo-deployment.
+        description: Token with Contents:write on the ledger repo.
         required: true
 
 # One promotion per service at a time; queue rather than cancel so a ledger write
@@ -51,18 +59,15 @@ jobs:
       IMAGE_NAME: ${{ inputs.image-name }}
     steps:
       # Accept either the bare version (1.2.3) or the tag as shown on the Releases
-      # page (v1.2.3); normalize to both a bare semver and the vX.Y.Z tag.
+      # page (v1.2.3); normalize to both a bare semver and the vX.Y.Z tag. Promotion
+      # needs the release to exist, so the existing-release check is skipped.
       - name: Normalize and validate version
         id: ver
-        run: |
-          set -euo pipefail
-          raw='${{ inputs.version }}'
-          bare="${raw#v}"
-          if ! printf '%s' "$bare" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
-            echo "::error title=Bad version::'$raw' is not a version (1.2.3) or tag (v1.2.3)."
-            exit 1
-          fi
-          { echo "version=$bare"; echo "tag=v$bare"; } >> "$GITHUB_OUTPUT"
+        uses: cgf-platform/shared-workflows/.github/actions/validate-release-version@v3.9.0
+        with:
+          version: ${{ inputs.version }}
+          prefix: allow
+          existing-release: ignore
 
       # The GitHub Release proves the version exists and names the commit it was built
       # from; the registry gives the digest the tag points to. Both use this repo's
@@ -84,7 +89,7 @@ jobs:
           released_at=$(printf '%s' "$meta" | jq -r '.createdAt')
           released_by=$(printf '%s' "$meta" | jq -r '.author.login // "unknown"')
 
-          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
           digest=$(docker buildx imagetools inspect "${IMAGE}:${TAG}" --format '{{.Manifest.Digest}}')
           case "$digest" in
             sha256:*) ;;
@@ -99,10 +104,12 @@ jobs:
           } >> "$GITHUB_OUTPUT"
           echo "Resolved ${IMAGE}:${TAG} -> $digest (commit $commit)"
 
+      # Deliberately persists the token: the next step commits and pushes to the ledger
+      # with it. The checkout lives only for this job and is never uploaded.
       - name: Check out the deploy ledger
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1  # zizmor: ignore[artipacked]
         with:
-          repository: dineroo-gn/dineroo-deployment
+          repository: ${{ inputs.ledger-repo }}
           token: ${{ secrets.LEDGER_TOKEN }}
           path: .deploy-ledger
 
@@ -114,11 +121,12 @@ jobs:
           COMMIT: ${{ steps.resolve.outputs.commit }}
           RELEASED_AT: ${{ steps.resolve.outputs.released_at }}
           RELEASED_BY: ${{ steps.resolve.outputs.released_by }}
+          LEDGER_REPO: ${{ inputs.ledger-repo }}
         run: |
           set -euo pipefail
           ledger="environments/prod/${IMAGE_NAME}.yaml"
           if [ ! -f "$ledger" ]; then
-            echo "::error title=No ledger file::$ledger not found in dineroo-deployment."
+            echo "::error title=No ledger file::$ledger not found in $LEDGER_REPO."
             exit 1
           fi
           cat > "$ledger" <<EOF
@@ -130,7 +138,7 @@ jobs:
           released_at: ${RELEASED_AT}
           released_by: ${RELEASED_BY}
           promoted_at: $(date -u +%Y-%m-%dT%H:%M:%SZ)
-          promoted_by: ${{ github.actor }}
+          promoted_by: ${GITHUB_ACTOR}
           EOF
           git config user.name "dineroo-release[bot]"
           git config user.email "release@dineroo.africa"

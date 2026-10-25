@@ -1,0 +1,48 @@
+name: Validate release version
+description: >-
+  Checks a human-supplied version is strict MAJOR.MINOR.PATCH and, optionally, that no
+  GitHub Release exists for it yet. Exposes the bare version and its v-tag. The version
+  reaches the checker through the environment, never through shell interpolation.
+
+inputs:
+  version:
+    description: Version as supplied by the caller
+    required: true
+  prefix:
+    description: >-
+      `forbid` rejects a leading v (release flows tag from a bare version); `allow`
+      accepts either 1.2.3 or v1.2.3 (promote flows take the tag as shown on Releases).
+    required: false
+    default: forbid
+  existing-release:
+    description: >-
+      `forbid` fails when a release for the tag already exists (a release is immutable);
+      `ignore` skips the lookup (promotion needs the release to exist).
+    required: false
+    default: forbid
+  github-token:
+    description: Token for the existing-release lookup; unused when existing-release is `ignore`
+    required: false
+    default: ""
+
+outputs:
+  version:
+    description: Bare MAJOR.MINOR.PATCH
+    value: ${{ steps.validate.outputs.version }}
+  tag:
+    description: The v-prefixed tag, vMAJOR.MINOR.PATCH
+    value: ${{ steps.validate.outputs.tag }}
+
+runs:
+  using: composite
+  steps:
+    - name: Validate version
+      id: validate
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+        VERSION_PREFIX: ${{ inputs.prefix }}
+        EXISTING_RELEASE: ${{ inputs.existing-release }}
+        GH_TOKEN: ${{ inputs.github-token }}
+        GITHUB_REPOSITORY: ${{ github.repository }}
+      run: python3 "${{ github.action_path }}/release_version.py"

@@ -16,7 +16,10 @@ secret set.
 
 ## Usage
 
-Two workflows, split along a privilege boundary. Add both to a service repo.
+A JVM service repo adds two caller workflows, split along a privilege boundary:
+`validate` (pull requests, no write scope) and `release` (post-merge, publishes).
+Promotion and Dockerfile apps use the other two reusable workflows, see
+[Inputs](#inputs).
 
 ### `.github/workflows/validate.yml`
 
@@ -33,7 +36,7 @@ jobs:
       contents: read
       packages: read
       actions: read
-    uses: cgf-platform/shared-workflows/.github/workflows/service-validate.yml@v3.1.0
+    uses: cgf-platform/shared-workflows/.github/workflows/service-validate.yml@v3.10.0
     with:
       service-name: order-service
     secrets:
@@ -69,7 +72,7 @@ jobs:
       packages: write
       security-events: write
       actions: read
-    uses: cgf-platform/shared-workflows/.github/workflows/service-release.yml@v3.1.0
+    uses: cgf-platform/shared-workflows/.github/workflows/service-release.yml@v3.10.0
     with:
       image-name: order-service
     secrets:
@@ -81,13 +84,34 @@ Exposes `digest` and `image` as outputs. Consume the digest; never a tag.
 
 ## Inputs
 
-**`service-validate`** — `service-name` (required), `java-version` (`21`),
+**`service-validate`** — `service-name` (required), `java-version` (empty: read
+`javaVersion` from the service's `gradle.properties`, fall back to `21`),
 `timeout-minutes` (`30`). Secrets (optional, read-only): `GPR_USER`, `GPR_KEY`.
 
-**`service-release`** — `image-name` (required), `java-version` (`21`),
-`severity-cutoff` (`high`), `vulnerability-exceptions-file`
-(`.github/vulnerability-exceptions.json`), `enable-code-scanning` (`false`),
-`publish-latest` (`false`), `timeout-minutes` (`45`).
+**`service-release`** — `image-name` (required), `version` (required),
+`java-version` (empty, as above), `severity-cutoff` (`high`),
+`vulnerability-exceptions-file` (`.github/vulnerability-exceptions.json`),
+`enable-code-scanning` (`false`), `generate-sbom` (`true`, informational, never
+blocks), `publish-latest` (`false`), `timeout-minutes` (`45`).
+
+**`service-promote`** — `image-name`, `version` (`1.2.3` or `v1.2.3`),
+`ledger-repo` (`dineroo-gn/dineroo-deployment`). Secret: `LEDGER_TOKEN`.
+
+**`docker-release`** — `image-name`, `version`, `build-args`, `context`, `platforms`.
+For Dockerfile apps such as the Next.js frontends.
+
+**`library-validate`** / **`library-publish`** — for Gradle libraries and plugins
+published to GitHub Packages (`build-conventions`, `platform-starters`,
+`platform-catalog`, `platform-migrations`). `library-validate` is read-only PR CI
+(`library-name`, `java-version`, `timeout-minutes`). `library-publish` is the manual,
+versioned release (`library-name`, `version`): build, publish, then tag, so a tag
+never names an unpublished version. The library's build reads `releaseVersion` and
+publishes with the `USERNAME`/`TOKEN` environment variables.
+
+**One JDK source.** `java-version` is optional everywhere. Left empty, the
+[`setup-jvm`](.github/actions/setup-jvm/) action reads `javaVersion` from
+`gradle.properties`, the same property the `build-conventions` plugin uses for the
+Gradle toolchain and the Paketo JRE, so a JDK upgrade is one line in the service.
 
 ### Accepting a finding for a limited time
 
@@ -145,13 +169,20 @@ moving `v2` alias — a moving tag is `@master` with better manners.
 ```
 .github/
   actions/
-    setup-jvm/           wrapper validation + JDK + Gradle cache
-    jvm-report/          JUnit + JaCoCo -> run summary; uploads HTML reports
-    image-facts/         size, platform, run-as user, JDK-vs-JRE, buildpacks
-    vulnerability-gate/  renders Grype SARIF, then gates on severity
+    setup-jvm/                wrapper validation + JDK (from gradle.properties) + Gradle cache
+    jvm-report/               JUnit + JaCoCo -> run summary; uploads HTML reports
+    image-facts/              size, platform, run-as user, JDK-vs-JRE, buildpacks
+    vulnerability-gate/       renders Grype SARIF, then gates on severity
+    validate-release-version/ strict semver check + "release must be new", env-only
   workflows/
-    service-validate.yml
-    service-release.yml
+    service-validate.yml      PR build, no write scope
+    service-release.yml       build once, scan, SBOM, publish, GitHub Release
+    service-promote.yml       write a released digest to the deploy ledger
+    docker-release.yml        the same release flow for Dockerfile apps
+    library-validate.yml      PR build for a Gradle library
+    library-publish.yml       manual versioned publish of a Gradle library
+    ci.yml                    this repo's own CI (not reusable)
+tests/                        behaviour tests for the helper scripts
 ```
 
 Composite actions are referenced as `cgf-platform/shared-workflows/.github/actions/<name>@<tag>`,
@@ -165,11 +196,23 @@ it can be read, run and tested locally:
 cd <service-repo> && SERVICE_NAME=order-service python3 path/to/summarize.py
 ```
 
+## Checks on this repo
+
+Every service runs code from here, so a mistake in a workflow is a fleet-wide
+incident. [`ci.yml`](.github/workflows/ci.yml) runs on every pull request:
+
+- `python3 -m unittest discover -s tests -v`, the behaviour tests for the helper scripts.
+- **actionlint** (which also runs shellcheck over every `run:` block), pinned by digest.
+- **zizmor**, a security audit of workflows and composite actions. Policy:
+  [`.github/zizmor.yml`](.github/zizmor.yml). Inputs, secrets and the actor reach
+  scripts through `env:`, never `${{ }}` interpolation into a `run:` block.
+- A check that every internal action ref points at one version.
+
 ## Cutting a release
 
 ```bash
-./scripts/release.sh v3.1.0          # rewrite internal refs, commit, tag
-./scripts/release.sh v3.1.0 --check  # verify only
+./scripts/release.sh v3.10.0          # rewrite internal refs, commit, tag
+./scripts/release.sh v3.10.0 --check  # verify only
 ```
 
 The reusable workflows reference their own composite actions by tag, and GitHub

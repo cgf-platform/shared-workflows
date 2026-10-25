@@ -49,10 +49,12 @@ on:
         required: true
         type: string
       java-version:
-        description: Temurin major version
+        description: >-
+          Temurin major version. Empty (default) reads `javaVersion` from the service's
+          gradle.properties so the JDK has a single source of truth, falling back to 21.
         required: false
         type: string
-        default: "21"
+        default: ""
       timeout-minutes:
         description: >-
           Abort after this long. A hung Testcontainers suite would otherwise run
@@ -80,6 +82,8 @@ jobs:
     steps:
       - name: Check out ${{ inputs.service-name }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false   # validation never pushes; keep the token out of .git/config
 
       - name: Set up JVM build
         uses: cgf-platform/shared-workflows/.github/actions/setup-jvm@v3.9.0
