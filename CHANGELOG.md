@@ -27,12 +27,16 @@ checking the starters it lists, `build-conventions` reading the catalog) failed 
   that reads a sibling package must now pass them, with a read-only token.
 - The `Manage Actions access` advice in the v3.10.0 header is gone: it does not work on a free plan.
 
+Use two tokens, not one. A pull-request build runs branch code that can read its secrets, so the
+read-only `GPR_KEY` goes to `library-validate` and the `write:packages` token (`GPR_PUBLISH_KEY`,
+falling back to `GPR_KEY`) goes only to `library-publish`.
+
 Callers of `library-publish` that resolve a sibling package pass the secrets explicitly:
 
 ```yaml
     secrets:
       GPR_USER: ${{ secrets.GPR_USER }}
-      GPR_KEY: ${{ secrets.GPR_KEY }}
+      GPR_KEY: ${{ secrets.GPR_PUBLISH_KEY || secrets.GPR_KEY }}
 ```
 
 ---
