@@ -11,8 +11,11 @@ name: library-validate
 #   permissions:
 #     contents: read
 #     packages: read
-# and may pass GPR_USER / GPR_KEY (read:packages only). Never `secrets: inherit`, and
-# never call this from a `pull_request_target` trigger.
+# and pass GPR_USER / GPR_KEY (a classic token with read:packages only) whenever the build
+# resolves ANOTHER repository's package. On GitHub's free plan the workflow's GITHUB_TOKEN
+# cannot read a sibling repo's private package, so without them such a build fails with
+# "Could not find ...". Never `secrets: inherit`, and never call this from a
+# `pull_request_target` trigger.
 
 on:
   workflow_call:
