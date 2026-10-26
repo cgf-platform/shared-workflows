@@ -108,6 +108,14 @@ versioned release (`library-name`, `version`): build, publish, then tag, so a ta
 never names an unpublished version. The library's build reads `releaseVersion` and
 publishes with the `USERNAME`/`TOKEN` environment variables.
 
+**Package credentials on a free plan.** `GITHUB_TOKEN` reaches only the calling repository's own
+packages. A library whose build reads another repository's private package (`platform-catalog`
+checking the starters, `build-conventions` reading the catalog) must pass `GPR_USER` / `GPR_KEY`:
+two classic personal access tokens (fine-grained tokens do not support GitHub Packages): a read-only one
+(`read:packages`, secret `GPR_KEY`) for validation, and a separate one with `write:packages` (secret
+`GPR_PUBLISH_KEY`) for releases only, because a pull-request build runs branch code that can read its
+secrets. Pass them explicitly, never `secrets: inherit`.
+
 **One JDK source.** `java-version` is optional everywhere. Left empty, the
 [`setup-jvm`](.github/actions/setup-jvm/) action reads `javaVersion` from
 `gradle.properties`, the same property the `build-conventions` plugin uses for the

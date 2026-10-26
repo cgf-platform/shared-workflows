@@ -11,6 +11,36 @@ existing green build. **PATCH** — a fix restoring intended behaviour.
 
 ---
 
+## v3.11.0
+
+`library-publish` can use a personal access token. Found on the first real release of
+`platform-catalog`: on GitHub's free plan the workflow's `GITHUB_TOKEN` can only reach the
+repository's own packages, so resolving a sibling repository's private package (the catalog
+checking the starters it lists, `build-conventions` reading the catalog) failed with
+"Could not find ..." even though the package exists.
+
+- **New optional secrets `GPR_USER` and `GPR_KEY` on `library-publish`.** A classic personal access
+  token with `read:packages` (to resolve sibling packages) and `write:packages` (to publish). Fine-grained
+  tokens do not support GitHub Packages. Without the secrets the build falls back to `GITHUB_TOKEN`
+  exactly as before, so a library that only publishes its own package is unaffected.
+- **`library-validate` documents the same rule.** It already accepted `GPR_USER` / `GPR_KEY`; a build
+  that reads a sibling package must now pass them, with a read-only token.
+- The `Manage Actions access` advice in the v3.10.0 header is gone: it does not work on a free plan.
+
+Use two tokens, not one. A pull-request build runs branch code that can read its secrets, so the
+read-only `GPR_KEY` goes to `library-validate` and the `write:packages` token (`GPR_PUBLISH_KEY`,
+falling back to `GPR_KEY`) goes only to `library-publish`.
+
+Callers of `library-publish` that resolve a sibling package pass the secrets explicitly:
+
+```yaml
+    secrets:
+      GPR_USER: ${{ secrets.GPR_USER }}
+      GPR_KEY: ${{ secrets.GPR_PUBLISH_KEY || secrets.GPR_KEY }}
+```
+
+---
+
 ## v3.10.0
 
 Hardens the pipeline against script injection, gives the repo its own CI, and adds the

@@ -14,12 +14,25 @@ name: library-publish
 #     contents: write   # create the tag and the GitHub Release
 #     packages: write   # publish to this repo's registry
 #
-# Resolving another cgf-platform package while building (for example the platform-catalog)
-# uses the same GITHUB_TOKEN, so the consuming repo needs read access on that package
-# (package settings -> "Manage Actions access").
+# Resolving ANOTHER repository's package while building (for example the platform-catalog) needs
+# a personal access token: on GitHub's free plan the workflow's GITHUB_TOKEN can only reach this
+# repository's own packages, and answers a private package of a sibling repo with a 404 that
+# reads as "Could not find ...". Callers pass GPR_USER / GPR_KEY explicitly (never
+# `secrets: inherit`); without them the build falls back to GITHUB_TOKEN, which still publishes
+# this repo's own package.
 
 on:
   workflow_call:
+    secrets:
+      GPR_USER:
+        description: GitHub user that owns GPR_KEY
+        required: false
+      GPR_KEY:
+        description: >-
+          Classic personal access token with read:packages to resolve sibling packages and
+          write:packages to publish this one (fine-grained tokens do not support GitHub Packages).
+          Falls back to the caller's GITHUB_TOKEN when absent.
+        required: false
     inputs:
       library-name:
         description: Library name, used for report headings and the concurrency group
@@ -80,8 +93,8 @@ jobs:
       - name: Build and publish to GitHub Packages
         env:
           RELEASE_VERSION: ${{ steps.version.outputs.version }}
-          USERNAME: ${{ github.actor }}
-          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          USERNAME: ${{ secrets.GPR_USER || github.actor }}
+          TOKEN: ${{ secrets.GPR_KEY || secrets.GITHUB_TOKEN }}
         run: ./gradlew build publish -PreleaseVersion="$RELEASE_VERSION"
 
       - name: Report tests and coverage
