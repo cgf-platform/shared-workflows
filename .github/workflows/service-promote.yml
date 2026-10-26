@@ -63,7 +63,7 @@ jobs:
       # needs the release to exist, so the existing-release check is skipped.
       - name: Normalize and validate version
         id: ver
-        uses: cgf-platform/shared-workflows/.github/actions/validate-release-version@v3.10.0
+        uses: cgf-platform/shared-workflows/.github/actions/validate-release-version@v3.11.0
         with:
           version: ${{ inputs.version }}
           prefix: allow
