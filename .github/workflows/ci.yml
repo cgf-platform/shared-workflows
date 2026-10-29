@@ -80,9 +80,14 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      # shellcheck ships on GitHub's Ubuntu runners; actionlint covers `run:` blocks only.
+      # shellcheck 0.10.0, pinned by digest like actionlint: the version on GitHub's Ubuntu runners
+      # moves with the image and has flagged scripts that a newer local shellcheck accepted.
+      # actionlint covers `run:` blocks only, so the scripts are linted here.
       - name: Lint repo scripts
-        run: shellcheck scripts/*.sh
+        run: >-
+          docker run --rm -v "$PWD:/mnt" -w /mnt
+          koalaman/shellcheck@sha256:2097951f02e735b613f4a34de20c40f937a6c8f18ecb170612c88c34517221fb
+          scripts/release.sh
       # Workflows reference their own composite actions by tag. A release rewrites every
       # ref to one version; a branch may sit at the last release's version, but never at
       # a mixture, which would silently load an older action from a newer workflow.
