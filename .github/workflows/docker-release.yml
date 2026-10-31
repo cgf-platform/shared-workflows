@@ -68,7 +68,7 @@ jobs:
 
       # Fail before the build if the version is malformed or already released.
       - name: Validate version is new semver
-        uses: cgf-platform/shared-workflows/.github/actions/validate-release-version@v3.10.0
+        uses: cgf-platform/shared-workflows/.github/actions/validate-release-version@v3.11.0
         with:
           version: ${{ inputs.version }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
