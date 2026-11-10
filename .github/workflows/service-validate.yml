@@ -86,7 +86,7 @@ jobs:
           persist-credentials: false   # validation never pushes; keep the token out of .git/config
 
       - name: Set up JVM build
-        uses: cgf-platform/shared-workflows/.github/actions/setup-jvm@v3.10.0
+        uses: cgf-platform/shared-workflows/.github/actions/setup-jvm@v3.11.0
         with:
           java-version: ${{ inputs.java-version }}
 
@@ -103,6 +103,6 @@ jobs:
       # names are worth surfacing.
       - name: Report tests and coverage
         if: ${{ !cancelled() }}
-        uses: cgf-platform/shared-workflows/.github/actions/jvm-report@v3.10.0
+        uses: cgf-platform/shared-workflows/.github/actions/jvm-report@v3.11.0
         with:
           service-name: ${{ inputs.service-name }}

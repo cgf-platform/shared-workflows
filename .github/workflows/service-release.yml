@@ -139,13 +139,13 @@ jobs:
       # Fail before the ~40-minute build if the version is malformed or already
       # released. A release is immutable: refuse to overwrite an existing tag.
       - name: Validate version is new semver
-        uses: cgf-platform/shared-workflows/.github/actions/validate-release-version@v3.10.0
+        uses: cgf-platform/shared-workflows/.github/actions/validate-release-version@v3.11.0
         with:
           version: ${{ inputs.version }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up JVM build
-        uses: cgf-platform/shared-workflows/.github/actions/setup-jvm@v3.10.0
+        uses: cgf-platform/shared-workflows/.github/actions/setup-jvm@v3.11.0
         with:
           java-version: ${{ inputs.java-version }}
 
@@ -178,7 +178,7 @@ jobs:
 
       - name: Report tests and coverage
         if: ${{ !cancelled() }}
-        uses: cgf-platform/shared-workflows/.github/actions/jvm-report@v3.10.0
+        uses: cgf-platform/shared-workflows/.github/actions/jvm-report@v3.11.0
         with:
           service-name: ${{ inputs.image-name }}
           retention-days: "30"
@@ -188,7 +188,7 @@ jobs:
       # buildpack, so images shipped a full JDK under a step labelled "JRE".
       - name: Record image facts
         if: ${{ !cancelled() }}
-        uses: cgf-platform/shared-workflows/.github/actions/image-facts@v3.10.0
+        uses: cgf-platform/shared-workflows/.github/actions/image-facts@v3.11.0
         with:
           image-ref: ${{ env.IMAGE }}:${{ env.TAG }}
 
@@ -230,7 +230,7 @@ jobs:
       # Runs after the upload so findings reach code scanning either way.
       - name: Gate on vulnerabilities
         if: ${{ !cancelled() }}
-        uses: cgf-platform/shared-workflows/.github/actions/vulnerability-gate@v3.10.0
+        uses: cgf-platform/shared-workflows/.github/actions/vulnerability-gate@v3.11.0
         with:
           sarif-file: ${{ steps.scan.outputs.sarif }}
           severity-cutoff: ${{ inputs.severity-cutoff }}
