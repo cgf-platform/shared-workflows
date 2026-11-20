@@ -95,7 +95,9 @@ Exposes `digest` and `image` as outputs. Consume the digest; never a tag.
 blocks), `publish-latest` (`false`), `timeout-minutes` (`45`).
 
 **`service-promote`** — `image-name`, `version` (`1.2.3` or `v1.2.3`),
-`ledger-repo` (`dineroo-gn/dineroo-deployment`). Secret: `LEDGER_TOKEN`.
+`environment` (`staging`, or `prod`: production is never the default),
+`ledger-repo` (`cgf-studio/dineroo-deployment`). Writes
+`environments/<environment>/<service>.yaml`. Secret: `LEDGER_TOKEN`.
 
 **`docker-release`** — `image-name`, `version`, `build-args`, `context`, `platforms`.
 For Dockerfile apps such as the Next.js frontends.
@@ -185,7 +187,7 @@ moving `v2` alias — a moving tag is `@master` with better manners.
   workflows/
     service-validate.yml      PR build, no write scope
     service-release.yml       build once, scan, SBOM, publish, GitHub Release
-    service-promote.yml       write a released digest to the deploy ledger
+    service-promote.yml       write a released digest to the deploy ledger (staging or prod)
     docker-release.yml        the same release flow for Dockerfile apps
     library-validate.yml      PR build for a Gradle library
     library-publish.yml       manual versioned publish of a Gradle library
