@@ -11,6 +11,63 @@ existing green build. **PATCH** — a fix restoring intended behaviour.
 
 ---
 
+## v4.0.0
+
+`service-promote` can target **staging** as well as production, and **defaults to staging**.
+The Dineroo deployment now runs two hosts from one ledger (`environments/prod/` and
+`environments/staging/` in `cgf-studio/dineroo-deployment`); a release is validated on
+staging before it is promoted to prod. The default is staging on purpose: reaching
+production must be an explicit choice, never the result of a forgotten input.
+
+**Breaking — why this is MAJOR**
+- **A caller that bumps without changes now promotes to staging, not prod.** The ledger
+  file written becomes `environments/staging/<service>.yaml` and the commit message
+  `deploy(staging): <service> vX.Y.Z`.
+- **A service with no staging ledger entry now fails by default.** The frontends
+  (`dineroo-admin`, `dineroo-website`) are not deployed to staging (they bake production
+  URLs at build time), so their Promote, green on v3.11.0, fails with "No ledger file"
+  until they pass `environment: prod`.
+
+**New**
+- **`environment` input on `service-promote`** (`staging` | `prod`, default `staging`).
+  Validated first: any other value, including an empty string, fails before anything is
+  resolved or written. The job name and the run summary show the target environment.
+
+**Migrating a backend service** — expose the choice in its `promote.yml`, defaulting to
+staging, so a manual run must pick prod deliberately:
+
+```yaml
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version/tag to deploy (e.g. 1.2.3 or v1.2.3). Leave BLANK to deploy the tag picked in "Use workflow from".
+        required: false
+        type: string
+      environment:
+        description: Where to deploy. prod only after validation on staging.
+        type: choice
+        options: [staging, prod]
+        default: staging
+
+jobs:
+  promote:
+    permissions:
+      contents: read
+      packages: read
+    uses: cgf-platform/shared-workflows/.github/workflows/service-promote.yml@v4.0.0
+    with:
+      image-name: order-service
+      version: ${{ inputs.version || github.ref_name }}
+      environment: ${{ inputs.environment }}
+    secrets:
+      LEDGER_TOKEN: ${{ secrets.LEDGER_TOKEN }}
+```
+
+**Migrating a frontend** (no staging deployment): pass `environment: prod` explicitly.
+
+---
+
 ## v3.11.0
 
 `library-publish` can use a personal access token. Found on the first real release of

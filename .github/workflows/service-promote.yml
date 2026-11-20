@@ -1,10 +1,15 @@
 name: service-promote
 
-# Promote an already-released version of a service to production. The release
-# workflow (service-release) builds an immutable image + GitHub Release but does
-# NOT deploy; this resolves the chosen version's digest and commit and writes them
-# to the deploy ledger (`ledger-repo`). The VPS reconciler then
-# rolls it out. Rollback = promote an earlier version (or git revert the ledger).
+# Promote an already-released version of a service to an environment (`staging` by
+# default, or `prod`). The release workflow (service-release) builds an immutable
+# image + GitHub Release but does NOT deploy; this resolves the chosen version's
+# digest and commit and writes them to environments/<environment>/<service>.yaml in
+# the deploy ledger (`ledger-repo`). That environment's host reconciler then rolls it
+# out. Rollback = promote an earlier version (or git revert the ledger).
+#
+# The default is staging so that reaching production is always an explicit choice:
+# a caller that forgets the input, or a manual run that keeps the default, cannot
+# deploy to prod by accident.
 #
 # The service's own GitHub Releases are the list of promotable versions. Digest and
 # commit are resolved with the service repo's own GITHUB_TOKEN (same-org package +
@@ -26,9 +31,17 @@ on:
         description: Released version to deploy, 1.2.3 or the tag v1.2.3
         required: true
         type: string
+      environment:
+        description: >-
+          Target environment, `staging` or `prod`. Defaults to staging: production is
+          only reached when asked for explicitly. The ledger must already hold
+          environments/<environment>/<service>.yaml.
+        required: false
+        type: string
+        default: staging
       ledger-repo:
         description: >-
-          owner/name of the repository holding environments/prod/<service>.yaml. The
+          owner/name of the repository holding environments/<environment>/<service>.yaml. The
           default is the current production ledger; override it rather than forking
           this workflow when the ledger moves.
         required: false
@@ -49,7 +62,7 @@ permissions: {}
 
 jobs:
   promote:
-    name: Promote ${{ inputs.image-name }} ${{ inputs.version }}
+    name: Promote ${{ inputs.image-name }} ${{ inputs.version }} to ${{ inputs.environment }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -57,7 +70,17 @@ jobs:
     env:
       IMAGE: ghcr.io/${{ github.repository_owner }}/${{ inputs.image-name }}
       IMAGE_NAME: ${{ inputs.image-name }}
+      ENVIRONMENT: ${{ inputs.environment }}
     steps:
+      # Fail before resolving anything: a typo must never fall through to a default.
+      - name: Validate target environment
+        run: |
+          set -euo pipefail
+          case "$ENVIRONMENT" in
+            staging|prod) echo "Target environment: $ENVIRONMENT" ;;
+            *) echo "::error title=Invalid environment::environment='$ENVIRONMENT' (expected staging or prod)."; exit 1 ;;
+          esac
+
       # Accept either the bare version (1.2.3) or the tag as shown on the Releases
       # page (v1.2.3); normalize to both a bare semver and the vX.Y.Z tag. Promotion
       # needs the release to exist, so the existing-release check is skipped.
@@ -124,9 +147,9 @@ jobs:
           LEDGER_REPO: ${{ inputs.ledger-repo }}
         run: |
           set -euo pipefail
-          ledger="environments/prod/${IMAGE_NAME}.yaml"
+          ledger="environments/${ENVIRONMENT}/${IMAGE_NAME}.yaml"
           if [ ! -f "$ledger" ]; then
-            echo "::error title=No ledger file::$ledger not found in $LEDGER_REPO."
+            echo "::error title=No ledger file::$ledger not found in $LEDGER_REPO. A service that is not deployed to ${ENVIRONMENT} (e.g. a frontend on staging) must pass another environment explicitly."
             exit 1
           fi
           cat > "$ledger" <<EOF
@@ -144,14 +167,14 @@ jobs:
           git config user.email "release@dineroo.africa"
           git add "$ledger"
           if git diff --cached --quiet; then
-            echo "Ledger already at ${IMAGE_NAME} v${VERSION}; nothing to promote."
+            echo "${ENVIRONMENT} ledger already at ${IMAGE_NAME} v${VERSION}; nothing to promote."
             exit 0
           fi
-          git commit -m "deploy(prod): ${IMAGE_NAME} v${VERSION}"
+          git commit -m "deploy(${ENVIRONMENT}): ${IMAGE_NAME} v${VERSION}"
           # Shared branch: rebase-retry so concurrent promotions don't collide.
           for attempt in 1 2 3 4 5; do
             if git push origin HEAD:master; then
-              echo "Promoted ${IMAGE_NAME} v${VERSION} (attempt $attempt)." >> "$GITHUB_STEP_SUMMARY"
+              echo "Promoted ${IMAGE_NAME} v${VERSION} to ${ENVIRONMENT} (attempt $attempt)." >> "$GITHUB_STEP_SUMMARY"
               exit 0
             fi
             echo "Push race on attempt $attempt; rebasing onto origin/master."
