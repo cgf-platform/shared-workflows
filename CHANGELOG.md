@@ -11,6 +11,21 @@ existing green build. **PATCH** — a fix restoring intended behaviour.
 
 ---
 
+## v4.0.1
+
+**Use this version, not v4.0.0.** The `v4.0.0` tag and GitHub Release were created
+directly on the merge commit of #12 instead of through `scripts/release.sh`, so its
+workflows still load the composite actions at `@v3.11.0`. Its `service-promote` behaves
+as documented below (`validate-release-version` is identical in both), but `setup-jvm` and
+`jvm-report` miss the action pin updates merged since v3.11.0 (`actions/setup-java` v6.3.0,
+`gradle/actions` v6.4.1, `actions/upload-artifact` v7.0.2).
+
+v4.0.1 is the same code with every internal action reference at `@v4.0.1`. No behaviour
+change from v4.0.0; read the v4.0.0 notes for the migration. v4.0.0 is left in place
+because tags here are immutable.
+
+---
+
 ## v4.0.0
 
 `service-promote` can target **staging** as well as production, and **defaults to staging**.
@@ -55,7 +70,7 @@ jobs:
     permissions:
       contents: read
       packages: read
-    uses: cgf-platform/shared-workflows/.github/workflows/service-promote.yml@v4.0.0
+    uses: cgf-platform/shared-workflows/.github/workflows/service-promote.yml@v4.0.1
     with:
       image-name: order-service
       version: ${{ inputs.version || github.ref_name }}
