@@ -222,7 +222,7 @@ jobs:
       - name: Upload scan results to code scanning
         if: ${{ inputs.enable-code-scanning && !cancelled() && steps.scan.outputs.sarif != '' }}
         continue-on-error: true   # a code-scanning outage must never fail a release
-        uses: github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4
+        uses: github/codeql-action/upload-sarif@1bd86f2fdb4b86187fa4059f16f31a3202acc9ea # v4
         with:
           sarif_file: ${{ steps.scan.outputs.sarif }}
           category: grype-image
