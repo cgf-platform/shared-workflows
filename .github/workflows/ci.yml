@@ -61,7 +61,7 @@ jobs:
       # actions, excessive permissions). Policy lives in .github/zizmor.yml. SARIF upload
       # needs Advanced Security, so findings surface as annotations and a failed job.
       - name: Audit workflows and actions
-        uses: zizmorcore/zizmor-action@a818f16177a5395fc11d3c73577caabaa7119391 # v0.9.1
+        uses: zizmorcore/zizmor-action@1b4550e929643b8b26a62303c6bd64814271a4f1 # v0.9.2
         with:
           version: 1.31.1
           collect: all
